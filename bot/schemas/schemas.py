@@ -183,6 +183,8 @@ class Config(BaseModel):
     auto_update: AutoUpdate = Field(default_factory=AutoUpdate)
     red_envelope: RedEnvelope = Field(default_factory=RedEnvelope)
     api: API = Field(default_factory=API)
+    git_user: str = ""
+    git_password: str = ""
 
     def __init__(self, **data):
         super().__init__(**data)

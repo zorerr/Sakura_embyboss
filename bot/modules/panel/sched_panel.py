@@ -5,7 +5,7 @@ import requests
 from pyrogram import filters
 from pyrogram.types import Message
 
-from bot import bot, sakura_b, schedall, save_config, prefixes, _open, owner, LOGGER, auto_update, group
+from bot import bot, sakura_b, schedall, save_config, prefixes, _open, owner, LOGGER, auto_update, group, config
 from bot.func_helper.filters import admins_on_filter, user_in_group_on_filter
 from bot.func_helper.fix_bottons import sched_buttons, plays_list_button
 from bot.func_helper.msg_utils import callAnswer, editMessage, deleteMessage
@@ -38,7 +38,7 @@ action_dict = {
     "weekplayrank": user_week_plays,
     "check_ex": check_expired,
     "low_activity": check_low_activity,
-    "backup_db": auto_backup_db,
+    "backup_db": None,  # 只做开关用，不直接绑定函数
 }
 
 # 字典，对应的操作函数的参数和id
@@ -49,16 +49,22 @@ args_dict = {
     "weekplayrank": {'day_of_week': "sun", 'hour': 23, 'minute': 0, 'id': 'user_week_plays'},
     "check_ex": {'hour': 1, 'minute': 30, 'id': 'check_expired'},
     "low_activity": {'hour': 8, 'minute': 30, 'id': 'check_low_activity'},
-    "backup_db": {'hour': 2, 'minute': 30, 'id': 'backup_db'},
+    "backup_db": {'hour': 2, 'minute': 0, 'id': 'daily_local_backup'},  # 仅做面板开关用
 }
 
 
 def set_all_sche():
     for key, value in action_dict.items():
+        if key == "backup_db":
+            continue  # 备份任务单独处理
         if getattr(schedall, key):
             action = action_dict[key]
             args = args_dict[key]
             scheduler.add_job(action, 'cron', **args)
+    # 统一由backup_db开关控制数据库备份相关任务
+    if getattr(schedall, "backup_db", False):
+        scheduler.add_job(DbBackupUtils.daily_local_backup, 'cron', hour=2, minute=0, id='daily_local_backup')
+        scheduler.add_job(DbBackupUtils.weekly_send_backup_to_tg, 'cron', day_of_week='sun', hour=3, minute=0, id='weekly_send_backup_to_tg')
 
 
 set_all_sche()
@@ -194,43 +200,63 @@ from sys import executable, argv
 @scheduler.SCHEDULER.scheduled_job('cron', hour='12', minute='30', id='update_bot')
 async def update_bot(force: bool = False, msg: Message = None, manual: bool = False):
     """
-    此为未被测试的代码片段。
+    自动更新，支持https账号密码和ssh两种方式，详细日志，失败时TG提示。
     """
-    # print("update")
     if not auto_update.status and not manual: return
     commit_url = f"https://api.github.com/repos/{auto_update.git_repo}/commits?per_page=1"
     resp = requests.get(commit_url)
-    if resp.status_code == 200:
-        latest_commit = resp.json()[0]["sha"]
-        if latest_commit != auto_update.commit_sha:
-            up_description = resp.json()[0]["commit"]["message"]
-            await execute("git fetch --all")
-            if force:  # 默认不重置，保留本地更改
-                await execute("git reset --hard origin/master")
-            await execute("git pull --all")
-            # await execute(f"{executable} -m pip install --upgrade -r requirements.txt")
-            await execute(f"{executable} -m pip install  -r requirements.txt")
-            text = '【AutoUpdate_Bot】运行成功，已更新bot代码。重启bot中...'
-            if not msg:
-                reply = await bot.send_message(chat_id=group[0], text=text)
-                schedall.restart_chat_id = group[0]
-                schedall.restart_msg_id = reply.id
+    git_user = getattr(config, 'git_user', '')
+    git_password = getattr(config, 'git_password', '')
+    remote_changed = False
+    try:
+        if resp.status_code == 200:
+            latest_commit = resp.json()[0]["sha"]
+            if latest_commit != auto_update.commit_sha:
+                up_description = resp.json()[0]["commit"]["message"]
+                # 如果有账号密码，临时设置remote为https://user:pass@...
+                if git_user and git_password:
+                    https_url = f"https://{git_user}:{git_password}@github.com/{auto_update.git_repo}.git"
+                    set_remote_result = await execute(f"git remote set-url origin {https_url}")
+                    LOGGER.info(f"[update_bot] git remote set-url 输出:\n{set_remote_result}")
+                    await bot.send_message(chat_id=get_notify_chat_id(msg), text=f"[update_bot] git remote set-url 输出:\n{set_remote_result}")
+                    remote_changed = True
+                fetch_result = await execute("git fetch --all")
+                LOGGER.info(f"[update_bot] git fetch --all 输出:\n{fetch_result}")
+                if 'fatal' in fetch_result or 'error' in fetch_result.lower():
+                    await bot.send_message(chat_id=get_notify_chat_id(msg), text=f"[update_bot] git fetch 失败，请检查git账号密码或SSH配置。")
+                if force:
+                    reset_result = await execute("git reset --hard origin/master")
+                    LOGGER.info(f"[update_bot] git reset --hard origin/master 输出:\n{reset_result}")
+                pull_result = await execute("git pull --all")
+                LOGGER.info(f"[update_bot] git pull --all 输出:\n{pull_result}")
+                text = '【AutoUpdate_Bot】运行成功，已更新bot代码。重启bot中...'
+                await bot.send_message(chat_id=get_notify_chat_id(msg), text=text)
+                auto_update.commit_sha = latest_commit
+                auto_update.up_description = up_description
+                save_config()
+                os.execl(executable, executable, *argv)
             else:
-                await msg.edit(text)
-            LOGGER.info(text)
-            auto_update.commit_sha = latest_commit
-            auto_update.up_description = up_description
-            save_config()
-            os.execl(executable, executable, *argv)
+                message = "【AutoUpdate_Bot】运行成功，未检测到更新，结束"
+                await bot.send_message(chat_id=get_notify_chat_id(msg), text=message) if not msg else await msg.edit(message)
+                LOGGER.info(message)
         else:
-            message = "【AutoUpdate_Bot】运行成功，未检测到更新，结束"
-            await bot.send_message(chat_id=group[0], text=message) if not msg else await msg.edit(message)
-            LOGGER.info(message)
-
-    else:
-        text = '【AutoUpdate_Bot】失败，请检查 git_repo 是否正确，形如 `berry8838/Sakura_embyboss`'
-        await bot.send_message(chat_id=group[0], text=text) if not msg else await msg.edit(text)
-        LOGGER.info(text)
+            text = '【AutoUpdate_Bot】失败，请检查 git_repo 是否正确，形如 `berry8838/Sakura_embyboss`'
+            await bot.send_message(chat_id=get_notify_chat_id(msg), text=text) if not msg else await msg.edit(text)
+            LOGGER.info(text)
+    except Exception as e:
+        # 恢复之前的restart_chat_id和restart_msg_id
+        schedall.restart_chat_id = old_restart_chat_id
+        schedall.restart_msg_id = old_restart_msg_id
+        auto_update.commit_sha = None
+        save_config()
+        err_msg = f"[update_bot] 自动更新失败: {e}"
+        LOGGER.error(err_msg)
+        await bot.send_message(chat_id=notify_chat_id, text=err_msg)
+    finally:
+        # 恢复remote为原始（不影响ssh用户）
+        if remote_changed:
+            origin_url = f"https://github.com/{auto_update.git_repo}.git"
+            await execute(f"git remote set-url origin {origin_url}")
 
 
 @bot.on_message(filters.command('update_bot', prefixes) & admins_on_filter)
@@ -245,3 +271,10 @@ async def get_update_bot(_, msg: Message):
         schedall.restart_msg_id = reply.id
         save_config()
         await update_bot(msg=reply, manual=True)
+
+# 辅助函数：根据触发来源决定消息发送对象
+def get_notify_chat_id(msg):
+    if msg and hasattr(msg, 'chat') and msg.chat:
+        return msg.chat.id
+    else:
+        return group[0]
