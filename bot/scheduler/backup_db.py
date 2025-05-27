@@ -1,4 +1,5 @@
 import os
+import glob
 
 import asyncio
 
@@ -66,3 +67,40 @@ class DbBackupUtils:
                 LOGGER.info(f'发送到owner失败，文件保存在本地:{e}')
         else:
             LOGGER.error(f'BOT数据库手动备份失败，请尽快检查相关配置')
+
+    @staticmethod
+    async def daily_local_backup():
+        LOGGER.info("每日本地数据库备份开始")
+        backup_file = await DbBackupUtils.backup_db()
+        if backup_file is not None:
+            LOGGER.info(f'每日本地数据库备份完毕，文件：{backup_file}')
+        else:
+            LOGGER.error(f'每日本地数据库备份失败，请检查相关配置')
+
+    @staticmethod
+    async def weekly_send_backup_to_tg():
+        LOGGER.info("每7天发送数据库备份到TG")
+        # 找到最新的备份文件
+        backup_files = sorted(glob.glob(os.path.join(db_backup_dir, f'{db_name}-*.sql')))
+        if backup_files:
+            latest_backup = backup_files[-1]
+            try:
+                await asyncio.gather(
+                    bot.send_document(
+                        chat_id=owner,
+                        document=latest_backup,
+                        caption=f'每7天数据库备份完毕',
+                        disable_notification=True
+                    ),
+                    bot.send_document(
+                        chat_id=owner,
+                        document='config.json',
+                        caption=f'config备份完毕',
+                        disable_notification=True
+                    )
+                )
+                LOGGER.info(f'每7天数据库备份已发送TG，文件：{latest_backup}')
+            except Exception as e:
+                LOGGER.error(f'每7天数据库备份发送TG失败: {e}')
+        else:
+            LOGGER.error("没有找到任何数据库备份文件，无法发送TG")
