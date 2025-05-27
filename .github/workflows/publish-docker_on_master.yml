@@ -13,6 +13,13 @@ jobs:
       packages: write
       contents: read
     steps:
+      # 检查强制推送
+      - name: Check for force push
+        if: ${{ github.event.forced }}
+        run: |
+          echo "❌ 错误：禁止强制推送！"
+          echo "请使用常规推送或联系管理员。"
+          exit 1
       -
         name: Checkout
         uses: actions/checkout@v3
