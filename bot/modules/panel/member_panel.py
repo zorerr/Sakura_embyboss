@@ -27,6 +27,16 @@ from bot.sql_helper.sql_code import sql_count_c_code
 from bot.sql_helper.sql_emby import sql_get_emby, sql_update_emby, Emby, sql_delete_emby
 from bot.sql_helper.sql_emby2 import sql_get_emby2, sql_delete_emby2
 
+# 登录提醒文本
+LOGIN_REMINDER = (
+    "\n\n🔔 **首次登录提醒**：\n"
+    "· 🌐 请使用上述线路地址登录客户端使用\n"
+    "· 📱 建议下载三方Emby客户端获得最佳体验\n"
+    "· 🔐 请妥善保管您的账号密码信息\n"
+    "· ⏰ 请及时登录，防止被封禁\n"
+    "· ❓ 如遇登录问题请联系群组管理员"
+)
+
 # 创号函数
 async def create_user(_, call, us, stats):
     msg = await ask_return(call,
@@ -80,7 +90,7 @@ async def create_user(_, call, us, stats):
                               f'· 到期时间 | `{ex}`\n'
                               f'· 当前线路：\n'
                               f'{emby_line}\n\n'
-                              f'**·【服务器】 - 查看线路和密码**')
+                              f'**·【服务器】 - 查看线路和密码**{LOGIN_REMINDER}')
             LOGGER.info(f"【创建账户】[开注状态]：{call.from_user.id} - 建立了 {emby_name} ") if stats else LOGGER.info(
                 f"【创建账户】：{call.from_user.id} - 建立了 {emby_name} ")
             tem_adduser()
@@ -179,7 +189,7 @@ async def change_tg(_, call):
                    f'· 安全密码 | `{e.pwd2}`（仅发送一次）\n' \
                    f'· 到期时间 | `{e.ex}`\n\n' \
                    f'· 当前线路：\n{emby_line}\n\n' \
-                   f'**·在【服务器】按钮 - 查看线路和密码**'
+                   f'**·在【服务器】按钮 - 查看线路和密码**{LOGIN_REMINDER}'
             await bot.send_message(current_id, text)
             LOGGER.info(
                 f'【TG改绑】 emby账户 {e.name} 绑定至 {current_id}')
@@ -243,7 +253,7 @@ async def change_tg(_, call):
                        f'· 安全密码 | `{e2.pwd2}`（仅发送一次）\n' \
                        f'· 到期时间 | `{e2.ex}`\n\n' \
                        f'· 当前线路：\n{emby_line}\n\n' \
-                       f'**·在【服务器】按钮 - 查看线路和密码**'
+                       f'**·在【服务器】按钮 - 查看线路和密码**{LOGIN_REMINDER}'
                 await sendMessage(call,
                                   f'⭕#TG改绑 原emby账户 #{emby_name}\n\n'
                                   f'从emby2表绑定至 [{call.from_user.first_name}](tg://user?id={call.from_user.id}) - {call.from_user.id}',
@@ -258,7 +268,7 @@ async def change_tg(_, call):
                        f'· 安全密码 | `{pwd[1]}`（仅发送一次）\n' \
                        f'· 到期时间 | `{e2.ex}`\n\n' \
                        f'· 当前线路：\n{emby_line}\n\n' \
-                       f'**·在【服务器】按钮 - 查看线路和密码**'
+                       f'**·在【服务器】按钮 - 查看线路和密码**{LOGIN_REMINDER}'
                 sql_update_emby(Emby.tg == call.from_user.id, embyid=e2.embyid, name=e2.name, pwd=e2.pwd,
                                 pwd2=emby_pwd, lv=e2.lv, cr=e2.cr, ex=e2.ex)
                 sql_delete_emby2(embyid=e2.embyid)
@@ -341,7 +351,7 @@ async def bind_tg(_, call):
                            f'· 安全密码 | `{pwd[1]}`（仅发送一次）\n' \
                            f'· 到期时间 | `{ex}`\n\n' \
                            f'· 当前线路：\n{emby_line}\n\n' \
-                           f'· **在【服务器】按钮 - 查看线路和密码**'
+                           f'· **在【服务器】按钮 - 查看线路和密码**{LOGIN_REMINDER}'
                     sql_update_emby(Emby.tg == call.from_user.id, embyid=embyid, name=emby_name, pwd=pwd[0],
                                     pwd2=pwd[1], lv='b', cr=datetime.now(), ex=ex)
                     await editMessage(call, text)
@@ -435,7 +445,7 @@ async def reset(_, call):
         else:
             if m.text != e.pwd2:
                 await m.delete()
-                await editMessage(call, f'**💢 验证不通过，{m.text} 安全码错误。**', buttons=re_reset_ikb)
+                await editMessage(call, f'**�� 验证不通过，{m.text} 安全码错误。**', buttons=re_reset_ikb)
             else:
                 await m.delete()
                 await editMessage(call, '🎯 请在 120s内 输入你要更新的密码,不限制中英文，emoji。特殊字符部分支持，其他概不负责。\n\n'
