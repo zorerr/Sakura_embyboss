@@ -114,6 +114,13 @@ class AutoUpdate(BaseModel):
     commit_sha: Optional[str] = None  # 最近一次commit
     up_description: Optional[str] = None  # 更新描述
 
+    def model_dump(self, **kwargs):
+        data = super().model_dump(**kwargs)
+        # 确保up_description字段总是被包含在输出中
+        if 'up_description' not in data:
+            data['up_description'] = None
+        return data
+
 
 class API(BaseModel):
     status: bool = False  # 默认关闭
@@ -185,8 +192,6 @@ class Config(BaseModel):
     auto_update: AutoUpdate = Field(default_factory=AutoUpdate)
     red_envelope: RedEnvelope = Field(default_factory=RedEnvelope)
     api: API = Field(default_factory=API)
-    git_user: str = ""
-    git_password: str = ""
 
     def __init__(self, **data):
         super().__init__(**data)

@@ -90,10 +90,6 @@
   },
   "kk_gift_days": 30,
   "fuxx_pitao": true,
-  "emby_whitelist_line": null,
-  "blocked_clients": null,
-  "client_filter_terminate_session": true,
-  "client_filter_block_user": false,
   "moviepilot": {
     "status": false,
     "host": null,
@@ -114,7 +110,5 @@
     "allow_origins": [
       "*"
     ]
-  },
-  "git_user": "",
-  "git_password": ""
+  }
 }

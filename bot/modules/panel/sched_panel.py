@@ -200,40 +200,66 @@ from sys import executable, argv
 @scheduler.SCHEDULER.scheduled_job('cron', hour='12', minute='30', id='update_bot')
 async def update_bot(force: bool = False, msg: Message = None, manual: bool = False):
     """
-    自动更新，支持https账号密码和ssh两种方式，详细日志，失败时TG提示。
+    自动更新，支持ssh方式，详细日志，失败时TG提示。
     """
-    if not auto_update.status and not manual: return
+    LOGGER.info(f"[update_bot] ====== 开始更新检查 (manual={manual}, force={force}) ======")
+    
+    # 保存当前的restart值
+    current_restart_chat_id = schedall.restart_chat_id
+    current_restart_msg_id = schedall.restart_msg_id
+    LOGGER.info(f"[update_bot] 保存当前restart状态: chat_id={current_restart_chat_id}, msg_id={current_restart_msg_id}")
+    
+    if not auto_update.status and not manual:
+        LOGGER.info("[update_bot] 自动更新未启用且非手动模式，退出更新")
+        return
+        
+    LOGGER.info(f"[update_bot] 正在检查仓库 {auto_update.git_repo} 的最新提交")
     commit_url = f"https://api.github.com/repos/{auto_update.git_repo}/commits?per_page=1"
     resp = requests.get(commit_url)
-    git_user = getattr(config, 'git_user', '')
-    git_password = getattr(config, 'git_password', '')
-    remote_changed = False
+    
     try:
         if resp.status_code == 200:
             latest_commit = resp.json()[0]["sha"]
-            if latest_commit != auto_update.commit_sha:
+            current_commit = auto_update.commit_sha
+            LOGGER.info(f"[update_bot] 当前commit: {current_commit}, 最新commit: {latest_commit}")
+            
+            if latest_commit != current_commit:
                 up_description = resp.json()[0]["commit"]["message"]
-                # 如果有账号密码，临时设置remote为https://user:pass@...
-                if git_user and git_password:
-                    https_url = f"https://{git_user}:{git_password}@github.com/{auto_update.git_repo}.git"
-                    set_remote_result = await execute(f"git remote set-url origin {https_url}")
-                    LOGGER.info(f"[update_bot] git remote set-url 输出:\n{set_remote_result}")
-                    await bot.send_message(chat_id=get_notify_chat_id(msg), text=f"[update_bot] git remote set-url 输出:\n{set_remote_result}")
-                    remote_changed = True
+                LOGGER.info(f"[update_bot] 发现新版本，更新说明: {up_description}")
+                
+                LOGGER.info("[update_bot] ====== 开始获取最新代码 ======")
                 fetch_result = await execute("git fetch --all")
                 LOGGER.info(f"[update_bot] git fetch --all 输出:\n{fetch_result}")
+                
                 if 'fatal' in fetch_result or 'error' in fetch_result.lower():
-                    await bot.send_message(chat_id=get_notify_chat_id(msg), text=f"[update_bot] git fetch 失败，请检查git账号密码或SSH配置。")
-                if force:
-                    reset_result = await execute("git reset --hard origin/master")
-                    LOGGER.info(f"[update_bot] git reset --hard origin/master 输出:\n{reset_result}")
-                pull_result = await execute("git pull --all")
-                LOGGER.info(f"[update_bot] git pull --all 输出:\n{pull_result}")
+                    error_msg = "[update_bot] git fetch 失败，请检查SSH配置。"
+                    LOGGER.error(error_msg)
+                    await bot.send_message(chat_id=get_notify_chat_id(msg), text=error_msg)
+                    return
+                
+                # 总是执行强制重置，确保与远程代码同步
+                LOGGER.info("[update_bot] ====== 强制重置到远程master分支 ======")
+                reset_result = await execute("git reset --hard origin/master")
+                LOGGER.info(f"[update_bot] git reset --hard origin/master 输出:\n{reset_result}")
+                
+                if 'fatal' in reset_result or 'error' in reset_result.lower():
+                    error_msg = "[update_bot] git reset 失败，请检查本地代码状态。"
+                    LOGGER.error(error_msg)
+                    await bot.send_message(chat_id=get_notify_chat_id(msg), text=error_msg)
+                    return
+                
                 text = '【AutoUpdate_Bot】运行成功，已更新bot代码。重启bot中...'
                 await bot.send_message(chat_id=get_notify_chat_id(msg), text=text)
-                auto_update.commit_sha = latest_commit
+                
+                LOGGER.info(f"[update_bot] 更新配置: commit_sha={latest_commit}, description={up_description}")
+                # 先保存更新说明，再保存commit_sha
                 auto_update.up_description = up_description
+                auto_update.commit_sha = latest_commit
                 save_config()
+                
+                LOGGER.info("[update_bot] ====== 开始重启bot ======")
+                # 确保日志被写入
+                await asyncio.sleep(2)
                 os.execl(executable, executable, *argv)
             else:
                 message = "【AutoUpdate_Bot】运行成功，未检测到更新，结束"
@@ -242,21 +268,20 @@ async def update_bot(force: bool = False, msg: Message = None, manual: bool = Fa
         else:
             text = '【AutoUpdate_Bot】失败，请检查 git_repo 是否正确，形如 `berry8838/Sakura_embyboss`'
             await bot.send_message(chat_id=get_notify_chat_id(msg), text=text) if not msg else await msg.edit(text)
-            LOGGER.info(text)
+            LOGGER.error(f"[update_bot] GitHub API请求失败: status_code={resp.status_code}")
     except Exception as e:
         # 恢复之前的restart_chat_id和restart_msg_id
-        schedall.restart_chat_id = old_restart_chat_id
-        schedall.restart_msg_id = old_restart_msg_id
+        LOGGER.error(f"[update_bot] 更新过程发生错误: {str(e)}")
+        schedall.restart_chat_id = current_restart_chat_id
+        schedall.restart_msg_id = current_restart_msg_id
         auto_update.commit_sha = None
+        auto_update.up_description = None  # 出错时也清除更新说明
         save_config()
         err_msg = f"[update_bot] 自动更新失败: {e}"
         LOGGER.error(err_msg)
-        await bot.send_message(chat_id=notify_chat_id, text=err_msg)
+        await bot.send_message(chat_id=get_notify_chat_id(msg), text=err_msg)
     finally:
-        # 恢复remote为原始（不影响ssh用户）
-        if remote_changed:
-            origin_url = f"https://github.com/{auto_update.git_repo}.git"
-            await execute(f"git remote set-url origin {origin_url}")
+        LOGGER.info("[update_bot] ====== 更新流程结束 ======")
 
 
 @bot.on_message(filters.command('update_bot', prefixes) & admins_on_filter)
