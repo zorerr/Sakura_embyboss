@@ -13,6 +13,7 @@ from datetime import timedelta, datetime
 from bot.schemas import ExDate, Yulv
 from bot import bot, LOGGER, _open, emby_line, sakura_b, ranks, group, extra_emby_libs, config, bot_name, schedall
 from pyrogram import filters
+from pyrogram.types import CallbackQuery
 from bot.func_helper.emby import emby
 from bot.func_helper.filters import user_in_group_on_filter
 from bot.func_helper.utils import members_info, tem_adduser, cr_link_one, judge_admins, tem_deluser, pwd_create
@@ -68,7 +69,7 @@ async def create_user(_, call, us, stats):
             if schedall.check_ex:
                 ex = ex.strftime("%Y-%m-%d %H:%M:%S")
             elif schedall.low_activity:
-                ex = '__若21天无观看将封禁__'
+                ex = f'__若{config.keep_alive_days}天无观看将封禁__'
             else:
                 ex = '__无需保号，放心食用__'
             await editMessage(send,
@@ -302,7 +303,7 @@ async def bind_tg(_, call):
                              '- **请确保您需绑定的账户不在bot中**\n'
                              '- **请确保您不是恶意绑定他人的账户**\n'
                              '- **请确保输入正确的emby用户名，密码**\n\n'
-                             '您有120s回复 `[emby用户名] [密码]`\n例如 `苏苏 5210` ，若密码为空则填写“None”，退出点 /cancel')
+                             '您有120s回复 `[emby用户名] [密码]`\n例如 `苏苏 5210` ，若密码为空则填写"None"，退出点 /cancel')
     if send is False:
         return
 
