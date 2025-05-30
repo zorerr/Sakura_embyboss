@@ -59,6 +59,7 @@
     "whitelist_cost": 9999,
     "invite_cost": 1000
   },
+  "keep_alive_days": 21,
   "tz_ad": "",
   "tz_api": "",
   "tz_id": [],

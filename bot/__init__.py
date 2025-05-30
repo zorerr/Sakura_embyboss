@@ -58,6 +58,7 @@ w_anti_channel_ids = config.w_anti_channel_ids
 kk_gift_days = config.kk_gift_days
 fuxx_pitao = config.fuxx_pitao
 red_envelope = config.red_envelope
+keep_alive_days = config.keep_alive_days
 
 moviepilot = config.moviepilot
 auto_update = config.auto_update

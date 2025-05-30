@@ -8,6 +8,7 @@ from bot.func_helper.utils import convert_to_beijing_time, convert_s, cache, get
 from bot.sql_helper import Session
 from bot.sql_helper.sql_emby import sql_get_emby, sql_update_embys, Emby, sql_update_emby
 from bot.func_helper.fix_bottons import plays_list_button
+from bot import config
 
 
 class Uplaysinfo:
@@ -139,13 +140,13 @@ class Uplaysinfo:
                 try:
                     ac_date = convert_to_beijing_time(user["LastActivityDate"])
                     # print(e.name, ac_date, now)
-                    if ac_date + timedelta(days=21) < now:
+                    if ac_date + timedelta(days=config.keep_alive_days) < now:
                         if await emby.emby_change_policy(id=user["Id"], method=True):
                             sql_update_emby(Emby.embyid == user["Id"], lv='c')
-                            msg += f"**🔋活跃检测** - [{user['Name']}](tg://user?id={e.tg})\n#id{e.tg} 21天未活跃，禁用\n\n"
-                            LOGGER.info(f"【活跃检测】- 禁用账户 {user['Name']} #id{e.tg}：21天未活跃")
+                            msg += f"**🔋活跃检测** - [{user['Name']}](tg://user?id={e.tg})\n#id{e.tg} {config.keep_alive_days}天未活跃，禁用\n\n"
+                            LOGGER.info(f"【活跃检测】- 禁用账户 {user['Name']} #id{e.tg}：{config.keep_alive_days}天未活跃")
                         else:
-                            msg += f"**🎂活跃检测** - [{user['Name']}](tg://user?id={e.tg})\n21天未活跃，禁用失败啦！检查emby连通性\n\n"
+                            msg += f"**🎂活跃检测** - [{user['Name']}](tg://user?id={e.tg})\n{config.keep_alive_days}天未活跃，禁用失败啦！检查emby连通性\n\n"
                             LOGGER.info(f"【活跃检测】- 禁用账户 {user['Name']} #id{e.tg}：禁用失败啦！检查emby连通性")
                 except KeyError:
                     if await emby.emby_change_policy(id=user["Id"], method=True):
