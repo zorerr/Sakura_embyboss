@@ -24,7 +24,7 @@ from bot.func_helper.msg_utils import callAnswer, editMessage, callListen, sendM
 from bot.modules.commands import p_start
 from bot.modules.commands.exchange import rgs_code
 from bot.sql_helper.sql_code import sql_count_c_code
-from bot.sql_helper.sql_emby import sql_get_emby, sql_update_emby, Emby, sql_delete_emby
+from bot.sql_helper.sql_emby import sql_get_emby, sql_update_emby, Emby, sql_delete_emby, sql_count_emby
 from bot.sql_helper.sql_emby2 import sql_get_emby2, sql_delete_emby2
 
 # 登录提醒文本
@@ -135,6 +135,23 @@ async def create(_, call):
 
     if e.embyid:
         await callAnswer(call, '💦 你已经有账户啦！请勿重复注册。', True)
+    elif _open.coin_register:
+        # {sakura_b}注册模式
+        # 检查人数限制
+        tg, current_users, white = sql_count_emby()
+        if current_users >= _open.all_user:
+            await callAnswer(call, f'🚫 {sakura_b}注册已满员，当前 {current_users}/{_open.all_user}', True)
+        elif int(e.iv) < _open.coin_cost:
+            await callAnswer(call, f'🪙 {sakura_b}注册需要 {_open.coin_cost} 个{sakura_b}，您当前只有 {e.iv} 个{sakura_b}。', True)
+        else:
+            send = await callAnswer(call, f'🪙 {sakura_b}注册中，扣除 {_open.coin_cost} 个{sakura_b}。', True)
+            if send is False:
+                return
+            else:
+                # 扣除{sakura_b}
+                new_iv = int(e.iv) - _open.coin_cost
+                sql_update_emby(Emby.tg == call.from_user.id, iv=new_iv)
+                await create_user(_, call, us=_open.open_us, stats=True)
     elif not _open.stat and int(e.us) <= 0:
         await callAnswer(call, f'🤖 自助注册已关闭，等待开启或使用注册码注册。', True)
     elif not _open.stat and int(e.us) > 0:
@@ -445,7 +462,7 @@ async def reset(_, call):
         else:
             if m.text != e.pwd2:
                 await m.delete()
-                await editMessage(call, f'**�� 验证不通过，{m.text} 安全码错误。**', buttons=re_reset_ikb)
+                await editMessage(call, f'**💢 验证不通过，{m.text} 安全码错误。**', buttons=re_reset_ikb)
             else:
                 await m.delete()
                 await editMessage(call, '🎯 请在 120s内 输入你要更新的密码,不限制中英文，emoji。特殊字符部分支持，其他概不负责。\n\n'

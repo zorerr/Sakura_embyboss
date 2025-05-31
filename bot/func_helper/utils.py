@@ -1,4 +1,5 @@
 import pytz
+import asyncio
 
 from bot import bot, _open, save_config, owner, admins, bot_name, ranks, schedall, group, config
 from bot.sql_helper.sql_code import sql_add_code
@@ -65,14 +66,45 @@ async def open_check():
 
 def tem_adduser():
     _open.tem = _open.tem + 1
-    if _open.tem >= _open.all_user:
+    
+    # 检查是否达到注册限制，使用实际注册人数
+    from bot.sql_helper.sql_emby import sql_count_emby
+    tg, current_users, white = sql_count_emby()
+    
+    if current_users >= _open.all_user:
         _open.stat = False
+        # 如果{sakura_b}注册正在运行，也要关闭它
+        if _open.coin_register:
+            from bot import sakura_b, LOGGER
+            _open.coin_register = False
+            # 发送注册结束消息到群组
+            asyncio.create_task(send_coin_register_end_message())
+            # 添加日志记录
+            LOGGER.info(f"【admin】-{sakura_b}注册：运行结束，注册人数已达限制 {current_users}/{_open.all_user}")
     save_config()
 
 
 def tem_deluser():
     _open.tem = _open.tem - 1
     save_config()
+
+
+async def send_coin_register_end_message():
+    """发送{sakura_b}注册结束消息到群组"""
+    from bot import sakura_b, bot_photo
+    from bot.func_helper.msg_utils import sendPhoto
+    from bot.sql_helper.sql_emby import sql_count_emby
+    
+    tg, current_users, white = sql_count_emby()
+    text = f'💰** {sakura_b}注册结束**：\n\n🍉 目前席位：{current_users}\n🎫 总注册限制：{_open.all_user}\n🎭 剩余可注册：0'
+    
+    # 发送到主群组
+    try:
+        # 直接使用bot发送，不需要message参数
+        from bot import bot
+        await bot.send_photo(chat_id=group[0], photo=bot_photo, caption=text)
+    except Exception as e:
+        print(f"发送{sakura_b}注册结束消息失败: {e}")
 
 
 from random import choice

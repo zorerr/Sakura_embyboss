@@ -6,7 +6,7 @@ import asyncio
 
 from pyrogram import filters
 
-from bot import bot, _open, save_config, bot_photo, LOGGER, bot_name, admins, owner
+from bot import bot, _open, save_config, bot_photo, LOGGER, bot_name, admins, owner, sakura_b
 from bot.func_helper.filters import admins_on_filter
 from bot.schemas import ExDate
 from bot.sql_helper.sql_code import sql_count_code, sql_count_p_code, sql_delete_all_unused, sql_delete_unused_by_days
@@ -23,10 +23,12 @@ async def gm_ikb(_, call):
     stat, all_user, tem, timing = await open_check()
     stat = "True" if stat else "False"
     timing = 'Turn off' if timing == 0 else str(timing) + ' min'
+    coin_register = "True" if _open.coin_register else "False"
     tg, emby, white = sql_count_emby()
     gm_text = f'⚙️ 欢迎您，亲爱的管理员 {call.from_user.first_name}\n\n' \
               f'· ®️ 注册状态 | **{stat}**\n' \
               f'· ⏳ 定时注册 | **{timing}**\n' \
+              f'· 💰 {sakura_b}注册 | **{coin_register}**\n' \
               f'· 🎫 总注册限制 | **{all_user}**\n'\
               f'· 🎟️ 已注册人数 | **{emby}** • WL **{white}**\n' \
               f'· 🤖 bot使用人数 | {tg}'
@@ -43,9 +45,10 @@ async def open_menu(_, call):
     tg, emby, white = sql_count_emby()
     openstats = '✅' if stat else '❎'  # 三元运算
     timingstats = '❎' if timing == 0 else '✅'
+    coinstats = '✅' if _open.coin_register else '❎'
     text = f'⚙ **注册状态设置**：\n\n- 自由注册即定量方式，定时注册既定时又定量，将自动转发消息至群组，再次点击按钮可提前结束并报告。\n' \
            f'- **注册总人数限制 {all_user}**'
-    await editMessage(call, text, buttons=open_menu_ikb(openstats, timingstats))
+    await editMessage(call, text, buttons=open_menu_ikb(openstats, timingstats, coinstats))
     if tem != emby:
         _open.tem = emby
         save_config()
@@ -57,6 +60,9 @@ async def open_stats(_, call):
     # 检查是否有定时注册正在运行
     if timing != 0:
         return await callAnswer(call, "🔴 定时注册正在运行中，无法开启自由注册。\n请先关闭定时注册。", True)
+    # 检查是否有{sakura_b}注册正在运行
+    if _open.coin_register:
+        return await callAnswer(call, f"🔴 {sakura_b}注册正在运行中，无法开启自由注册。\n请先关闭{sakura_b}注册。", True)
 
     tg, current_users, white = sql_count_emby()
     if stat:
@@ -125,6 +131,9 @@ async def open_timing(_, call):
         # 检查是否有自由注册正在运行
         if _open.stat:
             return await callAnswer(call, "🔴 自由注册正在运行中，无法开启定时注册。\n请先关闭自由注册。", True)
+        # 检查是否有{sakura_b}注册正在运行
+        if _open.coin_register:
+            return await callAnswer(call, f"🔴 {sakura_b}注册正在运行中，无法开启定时注册。\n请先关闭{sakura_b}注册。", True)
             
         await callAnswer(call, '⭕ 定时设置')
         tg, current_users, white = sql_count_emby()
@@ -209,6 +218,74 @@ async def change_for_timing(timing, tgid, call):
         send1 = await send.forward(tgid)
         LOGGER.info(f'【admin】-定时注册：运行结束，本次注册 目前席位：{_open.tem}  新增席位:{b}  剩余席位：{s}')
         await deleteMessage(send1, 30)
+
+
+@bot.on_callback_query(filters.regex('open_coin_register') & admins_on_filter)
+async def open_coin_register(_, call):
+    stat, all_user, tem, timing = await open_check()
+    # 检查是否有其他注册模式正在运行
+    if timing != 0:
+        return await callAnswer(call, f"🔴 定时注册正在运行中，无法开启{sakura_b}注册。\n请先关闭定时注册。", True)
+    if stat:
+        return await callAnswer(call, f"🔴 自由注册正在运行中，无法开启{sakura_b}注册。\n请先关闭自由注册。", True)
+
+    tg, current_users, white = sql_count_emby()
+    if _open.coin_register:
+        _open.coin_register = False
+        save_config()
+        await callAnswer(call, f"🟢【{sakura_b}注册】\n\n已结束", True)
+        sur = _open.all_user - current_users
+        text = f'🫧 管理员 {call.from_user.first_name} 已关闭 **{sakura_b}注册**\n\n' \
+               f'💰 所需{sakura_b} | {_open.coin_cost}\n🎫 总注册限制 | {_open.all_user}\n🎟️ 已注册人数 | {current_users}\n' \
+               f'🎭 剩余可注册 | **{sur}**\n🤖 bot使用人数 | {tg}'
+        await asyncio.gather(sendPhoto(call, photo=bot_photo, caption=text, send=True),
+                             editMessage(call, text, buttons=back_free_ikb))
+        LOGGER.info(f"【admin】：管理员 {call.from_user.first_name} 关闭了{sakura_b}注册")
+    elif not _open.coin_register:
+        await callAnswer(call, f'⭕ {sakura_b}注册设置')
+        await editMessage(call,
+                          f"🦄【{sakura_b}注册】 \n\n"
+                          f"🎟️ 当前已注册人数：{current_users}\n\n"
+                          f"- 请在 120s 内发送 [所需{sakura_b}数量] [开注人数]\n"
+                          f"- 形如：`100 50` 即需要100个{sakura_b}，开放50个注册名额\n"
+                          f"- 总人数限制将设为：{current_users} + 开注人数\n"
+                          f"- 用户必须拥有足够的{sakura_b}才能注册\n"
+                          f"- 如需要关闭{sakura_b}注册，再次点击【{sakura_b}注册】\n"
+                          f"- 退出 /cancel")
+
+        txt = await callListen(call, 120, buttons=back_open_menu_ikb)
+        if txt is False:
+            return
+
+        await txt.delete()
+        if txt.text == '/cancel':
+            return await open_menu(_, call)
+
+        try:
+            coin_cost, open_count = txt.text.split()
+            coin_cost = int(coin_cost)
+            open_count = int(open_count)
+            if coin_cost <= 0 or open_count <= 0:
+                raise ValueError(f"所需{sakura_b}数量和开注人数必须大于0")
+            _open.coin_cost = coin_cost
+            _open.all_user = current_users + open_count
+            _open.coin_register = True
+            save_config()
+        except ValueError:
+            await editMessage(call, f"🚫 请检查数字填写是否正确。\n`[所需{sakura_b}数量] [开注人数]`\n所需{sakura_b}数量和开注人数必须是大于0的整数", buttons=back_open_menu_ikb)
+        else:
+            tg, current_users, white = sql_count_emby()
+            sur = _open.all_user - current_users
+            await asyncio.gather(sendPhoto(call, photo=bot_photo,
+                                           caption=f'🫧 管理员 {call.from_user.first_name} 已开启 **{sakura_b}注册**\n\n'
+                                                   f'💰 所需{sakura_b} | {_open.coin_cost}\n🎫 总注册限制 | {_open.all_user}\n🎟️ 已注册人数 | {current_users}\n'
+                                                   f'🎭 剩余可注册 | **{sur}**\n🤖 bot使用人数 | {tg}',
+                                           buttons=gog_rester_ikb(), send=True),
+                                 editMessage(call,
+                                             f"®️ 好，已设置**{sakura_b}注册需要 {coin_cost} 个{sakura_b}，开放 {open_count} 个名额**\n"
+                                             f"总限额：{_open.all_user}（当前{current_users} + 开放{open_count}）",
+                                             buttons=back_free_ikb))
+            LOGGER.info(f"【admin】：管理员 {call.from_user.first_name} 开启了{sakura_b}注册，需要 {coin_cost} 个{sakura_b}，开放 {open_count} 个名额，总人数限制 {_open.all_user}")
 
 
 @bot.on_callback_query(filters.regex('open_us') & admins_on_filter)
