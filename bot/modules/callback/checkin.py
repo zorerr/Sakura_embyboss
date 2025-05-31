@@ -7,7 +7,7 @@ from pyrogram import filters
 from bot import bot, _open, sakura_b
 from bot.func_helper.filters import user_in_group_on_filter
 from bot.func_helper.msg_utils import callAnswer, editMessage
-from bot.sql_helper.sql_emby import sql_get_emby, sql_update_emby, Emby
+from bot.sql_helper.sql_emby import sql_get_emby, sql_update_emby, Emby, sql_count_today_checkin
 from pyromod.helpers import ikb
 
 # 存储用户超时任务的全局字典
@@ -136,12 +136,25 @@ async def handle_checkin_answer(_, call):
             s = e.iv + reward
             sql_update_emby(Emby.tg == call.from_user.id, iv=s, ch=now)
             
+            # 获取今日签到人数和是否为前3名
+            today_checkin_count, is_top3 = sql_count_today_checkin(call.from_user.id)
+            
+            # 前3名额外奖励
+            extra_reward = 0
+            top3_text = ""
+            if is_top3:
+                extra_reward = 10
+                s += extra_reward
+                sql_update_emby(Emby.tg == call.from_user.id, iv=s)
+                top3_text = f'\n🎊 **恭喜！您是今日前3名签到用户，额外获得{extra_reward}{sakura_b}奖励！**'
+            
             success_text = (
                 f'🎉 **签到成功！**\n\n'
                 f'✅ 验证通过！您选择了正确答案：{correct_answer}\n'
                 f'💰 获得奖励：{reward} {sakura_b}\n'
                 f'💳 当前余额：{s} {sakura_b}\n'
-                f'📅 签到时间：{now.strftime("%Y-%m-%d %H:%M:%S")}'
+                f'📅 签到时间：{now.strftime("%Y-%m-%d %H:%M:%S")}\n'
+                f'👥 今日签到人数：{today_checkin_count} 人{top3_text}'
             )
             
             await callAnswer(call, '🎉 签到成功！')

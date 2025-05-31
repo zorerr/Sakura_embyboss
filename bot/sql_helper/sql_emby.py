@@ -1,6 +1,7 @@
 """
 基本的sql操作
 """
+from datetime import datetime, timezone, timedelta
 from bot.sql_helper import Base, Session, engine
 from sqlalchemy import Column, BigInteger, String, DateTime, Integer, case
 from sqlalchemy import func
@@ -236,3 +237,42 @@ def sql_count_emby():
             return None, None, None
         else:
             return count.tg_count, count.embyid_count, count.lv_a_count
+
+def sql_count_today_checkin(current_user_tg=None):
+    """
+    统计今日签到成功的人数，并判断当前用户是否为前3名
+    :param current_user_tg: 当前用户的tg_id，用于判断是否为前3名
+    :return: (int, bool) 今日签到人数, 是否为前3名
+    """
+    with Session() as session:
+        try:
+            # 获取今日的开始和结束时间（北京时间）
+            now = datetime.now(timezone(timedelta(hours=8)))
+            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            today_end = now.replace(hour=23, minute=59, second=59, microsecond=999999)
+            
+            # 统计今日签到人数（ch字段不为空且在今日范围内）
+            count = session.query(func.count(Emby.tg)).filter(
+                Emby.ch.isnot(None),
+                Emby.ch >= today_start,
+                Emby.ch <= today_end
+            ).scalar()
+            
+            total_count = count if count else 0
+            is_top3 = False
+            
+            # 如果提供了用户ID，判断是否为前3名
+            if current_user_tg is not None and total_count <= 3:
+                # 检查当前用户是否在今日签到列表中
+                user_checkin = session.query(Emby).filter(
+                    Emby.tg == current_user_tg,
+                    Emby.ch.isnot(None),
+                    Emby.ch >= today_start,
+                    Emby.ch <= today_end
+                ).first()
+                is_top3 = user_checkin is not None
+            
+            return total_count, is_top3
+        except Exception as e:
+            LOGGER.error(f"统计今日签到人数时发生异常: {e}")
+            return 0, False
