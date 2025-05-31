@@ -54,8 +54,9 @@ async def open_menu(_, call):
 @bot.on_callback_query(filters.regex('open_stat') & admins_on_filter)
 async def open_stats(_, call):
     stat, all_user, tem, timing = await open_check()
+    # 检查是否有定时注册正在运行
     if timing != 0:
-        return await callAnswer(call, "🔴 目前正在运行定时注册。\n无法调用，请再次点击，【定时注册】关闭状态", True)
+        return await callAnswer(call, "🔴 定时注册正在运行中，无法开启自由注册。\n请先关闭定时注册。", True)
 
     tg, emby, white = sql_count_emby()
     if stat:
@@ -71,17 +72,40 @@ async def open_stats(_, call):
         # await open_menu(_, call)
         LOGGER.info(f"【admin】：管理员 {call.from_user.first_name} 关闭了自由注册")
     elif not stat:
-        _open.stat = True
-        save_config()
-        await callAnswer(call, "🟡【自由注册】\n\n已开启", True)
-        sur = all_user - tem  # for i in group可以多个群组用，但是现在不做
-        text = f'🫧 管理员 {call.from_user.first_name} 已开启 **自由注册**\n\n' \
-               f'🎫 总注册限制 | {all_user}\n🎟️ 已注册人数 | {tem}\n' \
-               f'🎭 剩余可注册 | **{sur}**\n🤖 bot使用人数 | {tg}'
-        await asyncio.gather(sendPhoto(call, photo=bot_photo, caption=text, buttons=gog_rester_ikb(), send=True),
-                             editMessage(call, text=text, buttons=back_free_ikb))
-        # await open_menu(_, call)
-        LOGGER.info(f"【admin】：管理员 {call.from_user.first_name} 开启了自由注册，总人数限制 {all_user}")
+        await callAnswer(call, '⭕ 自由注册设置')
+        await editMessage(call,
+                          "🦄【自由注册】 \n\n- 请在 120s 内发送总人数限制\n"
+                          "- 形如：`50` 即总人数限制50\n"
+                          "- 如需要关闭自由注册，再次点击【自由注册】\n"
+                          "- 退出 /cancel")
+
+        txt = await callListen(call, 120, buttons=back_open_menu_ikb)
+        if txt is False:
+            return
+
+        await txt.delete()
+        if txt.text == '/cancel':
+            return await open_menu(_, call)
+
+        try:
+            new_all_user = int(txt.text)
+            _open.all_user = new_all_user
+            _open.stat = True
+            save_config()
+        except ValueError:
+            await editMessage(call, "🚫 请检查数字填写是否正确。\n`[总人数]`", buttons=back_open_menu_ikb)
+        else:
+            tg, emby, white = sql_count_emby()
+            sur = _open.all_user - emby
+            await asyncio.gather(sendPhoto(call, photo=bot_photo,
+                                           caption=f'🫧 管理员 {call.from_user.first_name} 已开启 **自由注册**\n\n'
+                                                   f'🎫 总注册限制 | {_open.all_user}\n🎟️ 已注册人数 | {emby}\n'
+                                                   f'🎭 剩余可注册 | **{sur}**\n🤖 bot使用人数 | {tg}',
+                                           buttons=gog_rester_ikb(), send=True),
+                                 editMessage(call,
+                                             f"®️ 好，已设置**自由注册总限额 {_open.all_user}**",
+                                             buttons=back_free_ikb))
+            LOGGER.info(f"【admin】：管理员 {call.from_user.first_name} 开启了自由注册，总人数限制 {_open.all_user}")
 
 
 change_for_timing_task = None
@@ -91,6 +115,10 @@ change_for_timing_task = None
 async def open_timing(_, call):
     global change_for_timing_task
     if _open.timing == 0:
+        # 检查是否有自由注册正在运行
+        if _open.stat:
+            return await callAnswer(call, "🔴 自由注册正在运行中，无法开启定时注册。\n请先关闭自由注册。", True)
+            
         await callAnswer(call, '⭕ 定时设置')
         await editMessage(call,
                           "🦄【定时注册】 \n\n- 请在 120s 内发送 [定时时长] [总人数]\n"
@@ -167,31 +195,6 @@ async def change_for_timing(timing, tgid, call):
         await deleteMessage(send1, 30)
 
 
-@bot.on_callback_query(filters.regex('all_user_limit') & admins_on_filter)
-async def open_all_user_l(_, call):
-    await callAnswer(call, '⭕ 限制人数')
-    send = await call.message.edit(
-        "🦄 请在 120s 内发送开注总人数，本次修改不会对注册状态改动，如需要开注册请点击打开自由注册\n**注**：总人数满自动关闭注册 取消 /cancel")
-    if send is False:
-        return
-
-    txt = await callListen(call, 120, buttons=back_free_ikb)
-    if txt is False:
-        return
-    elif txt.text == "/cancel":
-        await txt.delete()
-        return await open_menu(_, call)
-
-    try:
-        await txt.delete()
-        a = int(txt.text)
-    except ValueError:
-        await editMessage(call, f"❌ 八嘎，请输入一个数字给我。", buttons=back_free_ikb)
-    else:
-        _open.all_user = a
-        save_config()
-        await editMessage(call, f"✔️ 成功，您已设置 **注册总人数 {a}**", buttons=back_free_ikb)
-        LOGGER.info(f"【admin】：管理员 {call.from_user.first_name} 调整了总人数限制：{a}")
 @bot.on_callback_query(filters.regex('open_us') & admins_on_filter)
 async def open_us(_, call):
     await callAnswer(call, '🤖开放账号天数')
