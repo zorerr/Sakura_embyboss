@@ -246,7 +246,7 @@ async def cr_link(_, call):
                              f'**天数**：月30，季90，半年180，年365\n'
                              f'**模式**： link -深链接 | code -码\n'
                              f'**续期**： F - 注册码，T - 续期码\n'
-                             f'**示例**：`30 1 link T` 记作 30天一条续期深链接\n'
+                             f'**示例**：`30 1 link F` 记作 30天一条注册深链接\n'
                              f'__取消本次操作，请 /cancel__')
     if send is False:
         return
