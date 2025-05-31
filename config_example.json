@@ -75,6 +75,7 @@
     "weekplayrank": false,
     "check_ex": true,
     "low_activity": false,
+    "clean_logs": false,
     "backup_db": false
   },
   "db_is_docker": true,

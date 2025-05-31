@@ -11,6 +11,11 @@ from bot.func_helper.fix_bottons import sched_buttons, plays_list_button
 from bot.func_helper.msg_utils import callAnswer, editMessage, deleteMessage
 from bot.func_helper.scheduler import scheduler
 from bot.scheduler import *
+from bot.scheduler.userplays_rank import Uplaysinfo
+from bot.scheduler.ranks_task import day_ranks, week_ranks
+from bot.scheduler.check_ex import check_expired
+from bot.scheduler.sync_favorites import sync_favorites
+from bot.scheduler.clean_logs import clean_old_logs
 
 
 # 初始化命令 开机检查重启
@@ -38,6 +43,7 @@ action_dict = {
     "weekplayrank": user_week_plays,
     "check_ex": check_expired,
     "low_activity": check_low_activity,
+    "clean_logs": clean_old_logs,
     "backup_db": None,  # 只做开关用，不直接绑定函数
 }
 
@@ -49,6 +55,7 @@ args_dict = {
     "weekplayrank": {'day_of_week': "sun", 'hour': 23, 'minute': 0, 'id': 'user_week_plays'},
     "check_ex": {'hour': 1, 'minute': 30, 'id': 'check_expired'},
     "low_activity": {'hour': 8, 'minute': 30, 'id': 'check_low_activity'},
+    "clean_logs": {'hour': 4, 'minute': 0, 'id': 'clean_old_logs'},
     "backup_db": {'hour': 2, 'minute': 0, 'id': 'daily_local_backup'},  # 仅做面板开关用
 }
 
@@ -125,6 +132,14 @@ async def run_low_ac(_, msg):
     await asyncio.gather(check_low_activity(), send.delete())
 
 
+@bot.on_message(filters.command('clean_logs', prefixes) & admins_on_filter)
+async def run_clean_logs(_, msg):
+    await deleteMessage(msg)
+    send = await msg.reply(f"🗑️ 日志清理运行中...")
+    await clean_old_logs()
+    await send.edit("✅ 【日志清理完成】")
+
+
 @bot.on_message(filters.command('uranks', prefixes) & admins_on_filter)
 async def shou_dong_uplayrank(_, msg):
     await deleteMessage(msg)
@@ -135,12 +150,15 @@ async def shou_dong_uplayrank(_, msg):
         await msg.reply(
             f"🔔 请输入 `/uranks 天数`，此运行手动不会影响{sakura_b}的结算（仅定时运行时结算），放心使用。\n"
             f"定时结算状态: {_open.uplays}")
+
+
 @bot.on_message(filters.command('sync_favorites', prefixes) & admins_on_filter)
 async def sync_favorites_admin(_, msg):
     await deleteMessage(msg)
     await msg.reply("⭕ 正在同步用户收藏记录...")
     await sync_favorites()
     await msg.reply("✅ 用户收藏记录同步完成")
+
 
 @bot.on_message(filters.command('restart', prefixes) & admins_on_filter)
 async def restart_bot(_, msg):
@@ -296,6 +314,7 @@ async def get_update_bot(_, msg: Message):
         schedall.restart_msg_id = reply.id
         save_config()
         await update_bot(msg=reply, manual=True)
+
 
 # 辅助函数：根据触发来源决定消息发送对象
 def get_notify_chat_id(msg):

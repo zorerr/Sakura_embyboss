@@ -435,6 +435,7 @@ def sched_buttons():
     weekplayrank = '✅' if schedall.weekplayrank else '❎'
     check_ex = '✅' if schedall.check_ex else '❎'
     low_activity = '✅' if schedall.low_activity else '❎'
+    clean_logs = '✅' if schedall.clean_logs else '❎'
     backup_db = '✅' if schedall.backup_db else '❎'
     keyboard = InlineKeyboard(row_width=2)
     keyboard.add(InlineButton(f'{dayrank} 播放日榜', f'sched-dayrank'),
@@ -443,6 +444,7 @@ def sched_buttons():
                  InlineButton(f'{weekplayrank} 观影周榜', f'sched-weekplayrank'),
                  InlineButton(f'{check_ex} 到期保号', f'sched-check_ex'),
                  InlineButton(f'{low_activity} 活跃保号', f'sched-low_activity'),
+                 InlineButton(f'{clean_logs} 日志清理', f'sched-clean_logs'),
                  InlineButton(f'{backup_db} 自动备份数据库', f'sched-backup_db')
                  )
     keyboard.row(InlineButton(f'🫧 返回', 'manage'))

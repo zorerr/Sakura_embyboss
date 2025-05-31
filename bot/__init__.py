@@ -95,6 +95,7 @@ admin_p = user_p + [
     BotCommand("scan_embyname", "扫描同名的用户记录 [管理]"),
     BotCommand("low_activity", "手动运行活跃检测 [管理]"),
     BotCommand("check_ex", "手动到期检测 [管理]"),
+    BotCommand("clean_logs", "手动清理日志 [管理]"),
     BotCommand("uranks", "召唤观影时长榜，失效时用 [管理]"),
     BotCommand("days_ranks", "召唤播放次数日榜，失效时用 [管理]"),
     BotCommand("week_ranks", "召唤播放次数周榜，失效时用 [管理]"),
