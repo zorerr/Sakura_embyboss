@@ -28,10 +28,14 @@ auto_backup_db = DbBackupUtils.auto_backup_db
 user_plays_rank = Uplaysinfo.user_plays_rank
 check_low_activity = Uplaysinfo.check_low_activity
 
-async def user_day_plays(): await user_plays_rank(1)
+async def user_day_plays(): 
+    LOGGER.info(f"【定时任务】开始执行日观影榜，uplays状态: {_open.uplays}")
+    await user_plays_rank(1, uplays=True)
 
 
-async def user_week_plays(): await user_plays_rank(7)
+async def user_week_plays(): 
+    LOGGER.info(f"【定时任务】开始执行周观影榜，uplays状态: {_open.uplays}")
+    await user_plays_rank(7, uplays=True)
 
 
 # 写优雅点

@@ -88,13 +88,19 @@ class Uplaysinfo:
 
     @staticmethod
     async def user_plays_rank(days=7, uplays=True):
+        LOGGER.info(f'【userplayrank】开始执行 {days}天观影榜，参数: uplays={uplays}, 全局开关: _open.uplays={_open.uplays}')
+        
         a, n, ls = await Uplaysinfo.users_playback_list(days)
         if not a:
             return await bot.send_photo(chat_id=group[0], photo=bot_photo,
                                         caption=f'🍥 获取过去{days}天UserPlays失败了嘤嘤嘤 ~ 手动重试 ')
         play_button = await plays_list_button(n, 1, days)
         send = await bot.send_photo(chat_id=group[0], photo=bot_photo, caption=a[0], reply_markup=play_button)
+        
+        LOGGER.info(f'【userplayrank】获取到 {len(ls)} 个用户的观影数据')
+        
         if uplays and _open.uplays:
+            LOGGER.info(f'【userplayrank】开始发放奖励，共 {len(ls)} 个用户')
             if sql_update_embys(some_list=ls, method='iv'):
                 text = f'**自动将观看时长转换为{sakura_b}**\n\n'
                 for i in ls:
@@ -108,6 +114,12 @@ class Uplaysinfo:
             else:
                 await send.reply(f'**🎂！！！为用户增加{sakura_b}出错啦** @工程师看看吧~ ')
                 LOGGER.error(f'【userplayrank】：-？失败 数据库执行批量操作{ls}')
+        else:
+            if not uplays:
+                LOGGER.info(f'【userplayrank】跳过奖励发放: uplays参数为False')
+            if not _open.uplays:
+                LOGGER.info(f'【userplayrank】跳过奖励发放: 全局开关_open.uplays为False')
+            LOGGER.info(f'【userplayrank】仅显示榜单，不发放奖励')
 
     @staticmethod
     async def check_low_activity():
