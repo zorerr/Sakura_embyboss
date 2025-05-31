@@ -33,6 +33,8 @@ class Uplaysinfo:
             if not result:
                 return None, 1
 
+            # 限制只显示前50名
+            play_list = play_list[:50]
             total_pages = math.ceil(len(play_list) / 10)
             members = await get_users()
             members_dict = {}
@@ -46,7 +48,6 @@ class Uplaysinfo:
                 }
 
             rank_medals = ["🥇", "🥈", "🥉", "🏅"]
-            rank_points = [1000, 900, 800, 700, 600, 500, 400, 300, 200, 100]
 
             pages_data = []
             leaderboard_data = []
@@ -57,6 +58,10 @@ class Uplaysinfo:
                 page_data = f'**▎🏆{ranks.logo} {days} 天观影榜**\n\n'
 
                 for rank, play_record in enumerate(play_list[start_index:end_index], start=start_index + 1):
+                    # 只给前50名发奖励
+                    if rank > 50:
+                        break
+                        
                     medal = rank_medals[rank - 1] if rank < 4 else rank_medals[3]
                     member_info = members_dict.get(play_record[0], None)
 
@@ -67,9 +72,8 @@ class Uplaysinfo:
                         emby_name = member_info["name"]
                         tg = member_info["tg"]
 
-                        # 计算积分
-                        points = rank_points[rank - 1] + (int(play_record[1]) // 60) if rank <= 10 else (
-                                    int(play_record[1]) // 60)
+                        # 计算积分 - 前50名获得观看时长积分，每3分钟获得1积分
+                        points = int(play_record[1]) // 180
                         new_iv = member_info["iv"] + points
                         leaderboard_data.append([member_info["tg"], new_iv, f'{medal}{emby_name}', points])
 
