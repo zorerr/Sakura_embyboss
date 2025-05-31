@@ -58,7 +58,7 @@ async def open_stats(_, call):
     if timing != 0:
         return await callAnswer(call, "🔴 定时注册正在运行中，无法开启自由注册。\n请先关闭定时注册。", True)
 
-    tg, emby, white = sql_count_emby()
+    tg, current_users, white = sql_count_emby()
     if stat:
         _open.stat = False
         save_config()
@@ -73,11 +73,15 @@ async def open_stats(_, call):
         LOGGER.info(f"【admin】：管理员 {call.from_user.first_name} 关闭了自由注册")
     elif not stat:
         await callAnswer(call, '⭕ 自由注册设置')
+        tg, current_users, white = sql_count_emby()
         await editMessage(call,
-                          "🦄【自由注册】 \n\n- 请在 120s 内发送总人数限制\n"
-                          "- 形如：`50` 即总人数限制50\n"
-                          "- 如需要关闭自由注册，再次点击【自由注册】\n"
-                          "- 退出 /cancel")
+                          f"🦄【自由注册】 \n\n"
+                          f"🎟️ 当前已注册人数：{current_users}\n\n"
+                          f"- 请在 120s 内发送开注人数\n"
+                          f"- 形如：`50` 即开放50个注册名额\n"
+                          f"- 总人数限制将设为：{current_users} + 开注人数\n"
+                          f"- 如需要关闭自由注册，再次点击【自由注册】\n"
+                          f"- 退出 /cancel")
 
         txt = await callListen(call, 120, buttons=back_open_menu_ikb)
         if txt is False:
@@ -88,24 +92,27 @@ async def open_stats(_, call):
             return await open_menu(_, call)
 
         try:
-            new_all_user = int(txt.text)
-            _open.all_user = new_all_user
+            open_count = int(txt.text)
+            if open_count <= 0:
+                raise ValueError("开注人数必须大于0")
+            _open.all_user = current_users + open_count
             _open.stat = True
             save_config()
         except ValueError:
-            await editMessage(call, "🚫 请检查数字填写是否正确。\n`[总人数]`", buttons=back_open_menu_ikb)
+            await editMessage(call, "🚫 请检查数字填写是否正确。\n开注人数必须是大于0的整数", buttons=back_open_menu_ikb)
         else:
-            tg, emby, white = sql_count_emby()
-            sur = _open.all_user - emby
+            tg, current_users, white = sql_count_emby()
+            sur = _open.all_user - current_users
             await asyncio.gather(sendPhoto(call, photo=bot_photo,
                                            caption=f'🫧 管理员 {call.from_user.first_name} 已开启 **自由注册**\n\n'
-                                                   f'🎫 总注册限制 | {_open.all_user}\n🎟️ 已注册人数 | {emby}\n'
+                                                   f'🎫 总注册限制 | {_open.all_user}\n🎟️ 已注册人数 | {current_users}\n'
                                                    f'🎭 剩余可注册 | **{sur}**\n🤖 bot使用人数 | {tg}',
                                            buttons=gog_rester_ikb(), send=True),
                                  editMessage(call,
-                                             f"®️ 好，已设置**自由注册总限额 {_open.all_user}**",
+                                             f"®️ 好，已设置**自由注册开放 {open_count} 个名额**\n"
+                                             f"总限额：{_open.all_user}（当前{current_users} + 开放{open_count}）",
                                              buttons=back_free_ikb))
-            LOGGER.info(f"【admin】：管理员 {call.from_user.first_name} 开启了自由注册，总人数限制 {_open.all_user}")
+            LOGGER.info(f"【admin】：管理员 {call.from_user.first_name} 开启了自由注册，开放 {open_count} 个名额，总人数限制 {_open.all_user}")
 
 
 change_for_timing_task = None
@@ -120,11 +127,15 @@ async def open_timing(_, call):
             return await callAnswer(call, "🔴 自由注册正在运行中，无法开启定时注册。\n请先关闭自由注册。", True)
             
         await callAnswer(call, '⭕ 定时设置')
+        tg, current_users, white = sql_count_emby()
         await editMessage(call,
-                          "🦄【定时注册】 \n\n- 请在 120s 内发送 [定时时长] [总人数]\n"
-                          "- 形如：`30 50` 即30min，总人数限制50\n"
-                          "- 如需要关闭定时注册，再次点击【定时注册】\n"
-                          "- 设置好之后将发送置顶消息注意权限\n- 退出 /cancel")
+                          f"🦄【定时注册】 \n\n"
+                          f"🎟️ 当前已注册人数：{current_users}\n\n"
+                          f"- 请在 120s 内发送 [定时时长] [开注人数]\n"
+                          f"- 形如：`30 50` 即30min，开放50个注册名额\n"
+                          f"- 总人数限制将设为：{current_users} + 开注人数\n"
+                          f"- 如需要关闭定时注册，再次点击【定时注册】\n"
+                          f"- 设置好之后将发送置顶消息注意权限\n- 退出 /cancel")
 
         txt = await callListen(call, 120, buttons=back_open_menu_ikb)
         if txt is False:
@@ -135,27 +146,32 @@ async def open_timing(_, call):
             return await open_menu(_, call)
 
         try:
-            new_timing, new_all_user = txt.text.split()
-            _open.timing = int(new_timing)
-            _open.all_user = int(new_all_user)
+            new_timing, open_count = txt.text.split()
+            new_timing = int(new_timing)
+            open_count = int(open_count)
+            if new_timing <= 0 or open_count <= 0:
+                raise ValueError("时长和开注人数必须大于0")
+            _open.timing = new_timing
+            _open.all_user = current_users + open_count
             _open.stat = True
             save_config()
         except ValueError:
-            await editMessage(call, "🚫 请检查数字填写是否正确。\n`[时长min] [总人数]`", buttons=back_open_menu_ikb)
+            await editMessage(call, "🚫 请检查数字填写是否正确。\n`[时长min] [开注人数]`\n时长和开注人数必须是大于0的整数", buttons=back_open_menu_ikb)
         else:
-            tg, emby, white = sql_count_emby()
-            sur = _open.all_user - emby
+            tg, current_users, white = sql_count_emby()
+            sur = _open.all_user - current_users
             await asyncio.gather(sendPhoto(call, photo=bot_photo,
                                            caption=f'🫧 管理员 {call.from_user.first_name} 已开启 **定时注册**\n\n'
                                                    f'⏳ 可持续时间 | **{_open.timing}** min\n'
-                                                   f'🎫 总注册限制 | {_open.all_user}\n🎟️ 已注册人数 | {emby}\n'
+                                                   f'🎫 总注册限制 | {_open.all_user}\n🎟️ 已注册人数 | {current_users}\n'
                                                    f'🎭 剩余可注册 | **{sur}**\n🤖 bot使用人数 | {tg}',
                                            buttons=gog_rester_ikb(), send=True),
                                  editMessage(call,
-                                             f"®️ 好，已设置**定时注册 {_open.timing} min 总限额 {_open.all_user}**",
+                                             f"®️ 好，已设置**定时注册 {_open.timing} min 开放 {open_count} 个名额**\n"
+                                             f"总限额：{_open.all_user}（当前{current_users} + 开放{open_count}）",
                                              buttons=back_free_ikb))
             LOGGER.info(
-                f"【admin】-定时注册：管理员 {call.from_user.first_name} 开启了定时注册 {_open.timing} min，人数限制 {sur}")
+                f"【admin】-定时注册：管理员 {call.from_user.first_name} 开启了定时注册 {_open.timing} min，开放 {open_count} 个名额，总人数限制 {_open.all_user}")
             # 创建一个异步任务并保存为变量，并给它一个名字
             change_for_timing_task = asyncio.create_task(
                 change_for_timing(_open.timing, call.from_user.id, call), name='change_for_timing')
