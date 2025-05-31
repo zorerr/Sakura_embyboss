@@ -29,7 +29,7 @@ from bot.sql_helper.sql_emby2 import sql_get_emby2, sql_delete_emby2
 
 # 登录提醒文本
 LOGIN_REMINDER = (
-    "\n\n🔔 **首次登录提醒**：\n"
+    "  🔔 **首次登录提醒**：\n"
     "· 🌐 请使用上述线路地址登录客户端使用\n"
     "· 📱 建议下载三方Emby客户端获得最佳体验\n"
     "· 🔐 请妥善保管您的账号密码信息\n"
