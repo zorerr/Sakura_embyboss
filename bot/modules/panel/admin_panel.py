@@ -14,7 +14,7 @@ from bot.sql_helper.sql_emby import sql_count_emby
 from bot.func_helper.fix_bottons import gm_ikb_content, open_menu_ikb, gog_rester_ikb, back_open_menu_ikb, \
     back_free_ikb, re_cr_link_ikb, close_it_ikb, ch_link_ikb, date_ikb, cr_paginate, cr_renew_ikb, invite_lv_ikb
 from bot.func_helper.msg_utils import callAnswer, editMessage, sendPhoto, callListen, deleteMessage, sendMessage
-from bot.func_helper.utils import open_check, cr_link_one,rn_link_one
+from bot.func_helper.utils import open_check, cr_link_one,rn_link_one, send_register_end_message
 
 
 @bot.on_callback_query(filters.regex('manage') & admins_on_filter)
@@ -196,6 +196,19 @@ async def open_timing(_, call):
         except AttributeError:
             pass
         else:
+            # 手动关闭定时注册，发送管理员关闭消息到群组
+            original_timing = _open.timing  # 保存原定时长
+            _open.timing = 0
+            _open.stat = False
+            save_config()
+            
+            tg, current_users, white = sql_count_emby()
+            sur = _open.all_user - current_users if current_users < _open.all_user else 0
+            text = f'🫧 管理员 {call.from_user.first_name} 已关闭 **定时注册**\n\n' \
+                   f'⏳ 原定时长 | {original_timing} min（已终止）\n🎫 总注册限制 | {_open.all_user}\n🎟️ 已注册人数 | {current_users}\n' \
+                   f'🎭 剩余可注册 | **{sur}**\n🤖 bot使用人数 | {tg}'
+            await sendPhoto(call, photo=bot_photo, caption=text, send=True)
+            
             await callAnswer(call, "Ⓜ️【定时任务运行终止】\n\n**已为您停止**", True)
             await open_menu(_, call)
 
@@ -203,21 +216,30 @@ async def open_timing(_, call):
 async def change_for_timing(timing, tgid, call):
     a = _open.tem
     timing = timing * 60
+    manually_cancelled = False
     try:
         await asyncio.sleep(timing)
     except asyncio.CancelledError:
-        pass
+        manually_cancelled = True
+        # 手动取消时不需要发送推送，因为在上面的else块已经处理了
     finally:
-        _open.timing = 0
-        _open.stat = False
-        save_config()
-        b = _open.tem - a
-        s = _open.all_user - _open.tem
-        text = f'⏳** 注册结束**：\n\n🍉 目前席位：{_open.tem}\n🥝 新增席位：{b}\n🍋 剩余席位：{s}'
-        send = await sendPhoto(call, photo=bot_photo, caption=text, timer=300, send=True)
-        send1 = await send.forward(tgid)
-        LOGGER.info(f'【admin】-定时注册：运行结束，本次注册 目前席位：{_open.tem}  新增席位:{b}  剩余席位：{s}')
-        await deleteMessage(send1, 30)
+        if not manually_cancelled:
+            # 只有在自动结束时才发送推送和管理员私信
+            _open.timing = 0
+            _open.stat = False
+            save_config()
+            b = _open.tem - a
+            s = _open.all_user - _open.tem
+            
+            # 使用统一的推送函数发送定时注册结束消息
+            await send_register_end_message("timing", _open.tem)
+            
+            # 同时保留原有的管理员私信通知逻辑
+            text = f'⏳** 注册结束**：\n\n🍉 目前席位：{_open.tem}\n🥝 新增席位：{b}\n🍋 剩余席位：{s}'
+            send = await sendPhoto(call, photo=bot_photo, caption=text, timer=300, send=True)
+            send1 = await send.forward(tgid)
+            LOGGER.info(f'【admin】-定时注册：运行结束，本次注册 目前席位：{_open.tem}  新增席位:{b}  剩余席位：{s}')
+            await deleteMessage(send1, 30)
 
 
 @bot.on_callback_query(filters.regex('open_coin_register') & admins_on_filter)

@@ -72,15 +72,32 @@ def tem_adduser():
     tg, current_users, white = sql_count_emby()
     
     if current_users >= _open.all_user:
-        _open.stat = False
-        # 如果{sakura_b}注册正在运行，也要关闭它
+        # 确定当前运行的注册模式
+        register_mode = None
         if _open.coin_register:
-            from bot import sakura_b, LOGGER
+            register_mode = "coin"
             _open.coin_register = False
-            # 发送注册结束消息到群组
-            asyncio.create_task(send_coin_register_end_message())
-            # 添加日志记录
+        elif _open.stat and _open.timing == 0:  # 自由注册（非定时）
+            register_mode = "free"
+            _open.stat = False
+        elif _open.stat and _open.timing > 0:  # 定时注册
+            register_mode = "timing"
+            _open.stat = False
+            _open.timing = 0
+        
+        # 发送注册结束消息到群组
+        if register_mode:
+            asyncio.create_task(send_register_end_message(register_mode, current_users))
+            
+        # 添加日志记录
+        from bot import sakura_b, LOGGER
+        if register_mode == "coin":
             LOGGER.info(f"【admin】-{sakura_b}注册：运行结束，注册人数已达限制 {current_users}/{_open.all_user}")
+        elif register_mode == "free":
+            LOGGER.info(f"【admin】-自由注册：运行结束，注册人数已达限制 {current_users}/{_open.all_user}")
+        elif register_mode == "timing":
+            LOGGER.info(f"【admin】-定时注册：运行结束，注册人数已达限制 {current_users}/{_open.all_user}")
+    
     save_config()
 
 
@@ -89,22 +106,42 @@ def tem_deluser():
     save_config()
 
 
-async def send_coin_register_end_message():
-    """发送{sakura_b}注册结束消息到群组"""
-    from bot import sakura_b, bot_photo
-    from bot.func_helper.msg_utils import sendPhoto
+async def send_register_end_message(register_mode, current_users):
+    """发送注册结束消息到群组
+    
+    Args:
+        register_mode: 注册模式 ("coin", "free", "timing")
+        current_users: 当前注册用户数
+    """
+    from bot import sakura_b, bot_photo, bot
     from bot.sql_helper.sql_emby import sql_count_emby
     
-    tg, current_users, white = sql_count_emby()
-    text = f'💰** {sakura_b}注册结束**：\n\n🍉 目前席位：{current_users}\n🎫 总注册限制：{_open.all_user}\n🎭 剩余可注册：0'
+    # 重新获取最新数据以确保准确性
+    tg, final_users, white = sql_count_emby()
+    
+    # 根据注册模式生成不同的推送消息
+    if register_mode == "coin":
+        text = f'💰** {sakura_b}注册结束**：\n\n🍉 目前席位：{final_users}\n🎫 总注册限制：{_open.all_user}\n🎭 剩余可注册：0'
+    elif register_mode == "free":
+        text = f'🆓** 自由注册结束**：\n\n🍉 目前席位：{final_users}\n🎫 总注册限制：{_open.all_user}\n🎭 剩余可注册：0'
+    elif register_mode == "timing":
+        text = f'⏳** 定时注册结束**：\n\n🍉 目前席位：{final_users}\n🎫 总注册限制：{_open.all_user}\n🎭 剩余可注册：0'
+    else:
+        text = f'📝** 注册结束**：\n\n🍉 目前席位：{final_users}\n🎫 总注册限制：{_open.all_user}\n🎭 剩余可注册：0'
     
     # 发送到主群组
     try:
-        # 直接使用bot发送，不需要message参数
-        from bot import bot
         await bot.send_photo(chat_id=group[0], photo=bot_photo, caption=text)
     except Exception as e:
-        print(f"发送{sakura_b}注册结束消息失败: {e}")
+        print(f"发送注册结束消息失败: {e}")
+
+
+# 保留原函数以保持向后兼容性，但内部调用新的统一函数
+async def send_coin_register_end_message():
+    """发送{sakura_b}注册结束消息到群组 - 向后兼容性函数"""
+    from bot.sql_helper.sql_emby import sql_count_emby
+    tg, current_users, white = sql_count_emby()
+    await send_register_end_message("coin", current_users)
 
 
 from random import choice
