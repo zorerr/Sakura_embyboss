@@ -12,7 +12,8 @@ from bot.schemas import ExDate
 from bot.sql_helper.sql_code import sql_count_code, sql_count_p_code, sql_delete_all_unused, sql_delete_unused_by_days
 from bot.sql_helper.sql_emby import sql_count_emby
 from bot.func_helper.fix_bottons import gm_ikb_content, open_menu_ikb, gog_rester_ikb, back_open_menu_ikb, \
-    back_free_ikb, re_cr_link_ikb, close_it_ikb, ch_link_ikb, date_ikb, cr_paginate, cr_renew_ikb, invite_lv_ikb
+    back_free_ikb, re_cr_link_ikb, close_it_ikb, ch_link_ikb, date_ikb, cr_paginate, cr_renew_ikb, invite_lv_ikb, \
+    back_free_register_ikb, back_coin_register_ikb
 from bot.func_helper.msg_utils import callAnswer, editMessage, sendPhoto, callListen, deleteMessage, sendMessage
 from bot.func_helper.utils import open_check, cr_link_one,rn_link_one, send_register_end_message
 
@@ -89,7 +90,7 @@ async def open_stats(_, call):
                           f"- 如需要关闭自由注册，再次点击【自由注册】\n"
                           f"- 退出 /cancel")
 
-        txt = await callListen(call, 120, buttons=back_open_menu_ikb)
+        txt = await callListen(call, 120, buttons=back_free_register_ikb)
         if txt is False:
             return
 
@@ -105,7 +106,7 @@ async def open_stats(_, call):
             _open.stat = True
             save_config()
         except ValueError:
-            await editMessage(call, "🚫 请检查数字填写是否正确。\n开注人数必须是大于0的整数", buttons=back_open_menu_ikb)
+            await editMessage(call, "🚫 请检查数字填写是否正确。\n开注人数必须是大于0的整数", buttons=back_free_register_ikb)
         else:
             tg, current_users, white = sql_count_emby()
             sur = _open.all_user - current_users
@@ -275,7 +276,7 @@ async def open_coin_register(_, call):
                           f"- 如需要关闭{sakura_b}注册，再次点击【{sakura_b}注册】\n"
                           f"- 退出 /cancel")
 
-        txt = await callListen(call, 120, buttons=back_open_menu_ikb)
+        txt = await callListen(call, 120, buttons=back_coin_register_ikb)
         if txt is False:
             return
 
@@ -294,7 +295,7 @@ async def open_coin_register(_, call):
             _open.coin_register = True
             save_config()
         except ValueError:
-            await editMessage(call, f"🚫 请检查数字填写是否正确。\n`[所需{sakura_b}数量] [开注人数]`\n所需{sakura_b}数量和开注人数必须是大于0的整数", buttons=back_open_menu_ikb)
+            await editMessage(call, f"🚫 请检查数字填写是否正确。\n`[所需{sakura_b}数量] [开注人数]`\n所需{sakura_b}数量和开注人数必须是大于0的整数", buttons=back_coin_register_ikb)
         else:
             tg, current_users, white = sql_count_emby()
             sur = _open.all_user - current_users

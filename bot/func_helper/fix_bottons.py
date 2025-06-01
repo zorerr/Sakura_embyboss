@@ -145,6 +145,8 @@ def open_menu_ikb(openstats, timingstats, coinstats) -> InlineKeyboardMarkup:
 
 back_free_ikb = ikb([[('🔙 返回上一级', 'open-menu')]])
 back_open_menu_ikb = ikb([[('🪪 重新定时', 'open_timing'), ('🔙 注册状态', 'open-menu')]])
+back_free_register_ikb = ikb([[('🆓 重新自由注册', 'open_stat'), ('🔙 注册状态', 'open-menu')]])
+back_coin_register_ikb = ikb([[(f'💰 重新{sakura_b}注册', 'open_coin_register'), ('🔙 注册状态', 'open-menu')]])
 re_cr_link_ikb = ikb([[('♻️ 继续创建', 'cr_link'), ('🎗️ 返回主页', 'manage')]])
 close_it_ikb = ikb([[('❌ - Close', 'closeit')]])
 
