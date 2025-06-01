@@ -3,7 +3,7 @@ import asyncio
 
 from bot import bot, _open, save_config, owner, admins, bot_name, ranks, schedall, group, config
 from bot.sql_helper.sql_code import sql_add_code
-from bot.sql_helper.sql_emby import sql_get_emby
+from bot.sql_helper.sql_emby import sql_get_emby, sql_count_emby
 from cacheout import Cache
 
 cache = Cache()
@@ -64,54 +64,18 @@ async def open_check():
     return open_stats, all_user, tem, timing
 
 
-def tem_adduser():
-    _open.tem = _open.tem + 1
-    
-    # 检查是否达到注册限制，使用实际注册人数
-    from bot.sql_helper.sql_emby import sql_count_emby
-    tg, current_users, white = sql_count_emby()
-    
-    if current_users >= _open.all_user:
-        # 确定当前运行的注册模式
-        register_mode = None
-        if _open.coin_register:
-            register_mode = "coin"
-            _open.coin_register = False
-        elif _open.stat and _open.timing == 0:  # 自由注册（非定时）
-            register_mode = "free"
-            _open.stat = False
-        elif _open.stat and _open.timing > 0:  # 定时注册
-            register_mode = "timing"
-            _open.stat = False
-            _open.timing = 0
-        
-        # 发送注册结束消息到群组
-        if register_mode:
-            asyncio.create_task(send_register_end_message(register_mode, current_users))
-            
-        # 添加日志记录
-        from bot import sakura_b, LOGGER
-        if register_mode == "coin":
-            LOGGER.info(f"【admin】-{sakura_b}注册：运行结束，注册人数已达限制 {current_users}/{_open.all_user}")
-        elif register_mode == "free":
-            LOGGER.info(f"【admin】-自由注册：运行结束，注册人数已达限制 {current_users}/{_open.all_user}")
-        elif register_mode == "timing":
-            LOGGER.info(f"【admin】-定时注册：运行结束，注册人数已达限制 {current_users}/{_open.all_user}")
-    
-    save_config()
-
-
 def tem_deluser():
     _open.tem = _open.tem - 1
     save_config()
 
 
-async def send_register_end_message(register_mode, current_users):
+async def send_register_end_message(register_mode, current_users, start_users=None):
     """发送注册结束消息到群组
     
     Args:
         register_mode: 注册模式 ("coin", "free", "timing")
         current_users: 当前注册用户数
+        start_users: 注册开始时的用户数（可选，用于计算新增席位）
     """
     from bot import sakura_b, bot_photo, bot
     from bot.sql_helper.sql_emby import sql_count_emby
@@ -119,15 +83,24 @@ async def send_register_end_message(register_mode, current_users):
     # 重新获取最新数据以确保准确性
     tg, final_users, white = sql_count_emby()
     
+    # 计算新增席位和剩余可注册
+    if start_users is not None:
+        new_seats = final_users - start_users
+    else:
+        # 如果没有提供开始用户数，则使用当前用户数作为新增（向后兼容）
+        new_seats = 0
+    
+    remaining_seats = _open.all_user - final_users if final_users < _open.all_user else 0
+    
     # 根据注册模式生成不同的推送消息
     if register_mode == "coin":
-        text = f'💰** {sakura_b}注册结束**：\n\n🍉 目前席位：{final_users}\n🎫 总注册限制：{_open.all_user}\n🎭 剩余可注册：0'
+        text = f'💰** {sakura_b}注册结束**：\n\n🍉 目前席位：{final_users}\n🥝 新增席位：{new_seats}\n🍋 剩余席位：{remaining_seats}'
     elif register_mode == "free":
-        text = f'🆓** 自由注册结束**：\n\n🍉 目前席位：{final_users}\n🎫 总注册限制：{_open.all_user}\n🎭 剩余可注册：0'
+        text = f'🆓** 自由注册结束**：\n\n🍉 目前席位：{final_users}\n🥝 新增席位：{new_seats}\n🍋 剩余席位：{remaining_seats}'
     elif register_mode == "timing":
-        text = f'⏳** 定时注册结束**：\n\n🍉 目前席位：{final_users}\n🎫 总注册限制：{_open.all_user}\n🎭 剩余可注册：0'
+        text = f'⏳** 定时注册结束**：\n\n🍉 目前席位：{final_users}\n🥝 新增席位：{new_seats}\n🍋 剩余席位：{remaining_seats}'
     else:
-        text = f'📝** 注册结束**：\n\n🍉 目前席位：{final_users}\n🎫 总注册限制：{_open.all_user}\n🎭 剩余可注册：0'
+        text = f'📝** 注册结束**：\n\n🍉 目前席位：{final_users}\n🥝 新增席位：{new_seats}\n🍋 剩余席位：{remaining_seats}'
     
     # 发送到主群组
     try:

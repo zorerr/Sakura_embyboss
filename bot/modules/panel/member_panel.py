@@ -11,12 +11,12 @@ import math
 import random
 from datetime import timedelta, datetime
 from bot.schemas import ExDate, Yulv
-from bot import bot, LOGGER, _open, emby_line, sakura_b, ranks, group, extra_emby_libs, config, bot_name, schedall
+from bot import bot, LOGGER, _open, emby_line, sakura_b, ranks, group, extra_emby_libs, config, bot_name, schedall, save_config
 from pyrogram import filters
 from pyrogram.types import CallbackQuery
 from bot.func_helper.emby import emby
 from bot.func_helper.filters import user_in_group_on_filter
-from bot.func_helper.utils import members_info, tem_adduser, cr_link_one, judge_admins, tem_deluser, pwd_create
+from bot.func_helper.utils import members_info, cr_link_one, judge_admins, tem_deluser, pwd_create, send_register_end_message
 from bot.func_helper.fix_bottons import members_ikb, back_members_ikb, re_create_ikb, del_me_ikb, re_delme_ikb, \
     re_reset_ikb, re_changetg_ikb, emby_block_ikb, user_emby_block_ikb, user_emby_unblock_ikb, re_exchange_b_ikb, \
     store_ikb, re_bindtg_ikb, close_it_ikb, store_query_page, re_born_ikb, send_changetg_ikb, favorites_page_ikb
@@ -54,8 +54,14 @@ async def create_user(_, call, us, stats):
     except (IndexError, ValueError):
         await msg.reply(f'⚠️ 输入格式错误\n\n`{msg.text}`\n **会话已结束！**')
     else:
-        if _open.tem >= _open.all_user: return await msg.reply(
-            f'**🚫 很抱歉，注册总数({_open.tem})已达限制({_open.all_user})。**')
+        # 获取创建前的用户数，用于计算新增
+        from bot.sql_helper.sql_emby import sql_count_emby
+        from bot.func_helper.utils import send_register_end_message
+        tg, start_users, white = sql_count_emby()
+        
+        if start_users >= _open.all_user: 
+            return await msg.reply(f'**🚫 很抱歉，注册总数({start_users})已达限制({_open.all_user})。**')
+        
         send = await msg.reply(
             f'🆗 会话结束，收到设置\n\n用户名：**{emby_name}**  安全码：**{emby_pwd2}** \n\n__正在为您初始化账户，更新用户策略__......')
         # emby api操作
@@ -76,6 +82,22 @@ async def create_user(_, call, us, stats):
                                                                                     pwd2=emby_pwd2, lv='b',
                                                                                     cr=datetime.now(), ex=ex,
                                                                                     us=0)
+            
+            # 用户创建成功后，检查是否达到限制并发送相应推送
+            tg, current_users, white = sql_count_emby()
+            if current_users >= _open.all_user:
+                if _open.coin_register:
+                    _open.coin_register = False
+                    save_config()
+                    # 发送{sakura_b}注册结束推送，传入开始用户数
+                    asyncio.create_task(send_register_end_message("coin", current_users, start_users))
+                elif _open.stat and _open.timing == 0:  # 自由注册（非定时）
+                    _open.stat = False
+                    save_config()
+                    # 发送自由注册结束推送，传入开始用户数
+                    asyncio.create_task(send_register_end_message("free", current_users, start_users))
+                # 注意：定时注册不在这里处理，在change_for_timing函数中处理
+            
             if schedall.check_ex:
                 ex = ex.strftime("%Y-%m-%d %H:%M:%S")
             elif schedall.low_activity:
@@ -93,7 +115,6 @@ async def create_user(_, call, us, stats):
                               f'**·【服务器】 - 查看线路和密码**{LOGIN_REMINDER}')
             LOGGER.info(f"【创建账户】[开注状态]：{call.from_user.id} - 建立了 {emby_name} ") if stats else LOGGER.info(
                 f"【创建账户】：{call.from_user.id} - 建立了 {emby_name} ")
-            tem_adduser()
 
 
 # 键盘中转

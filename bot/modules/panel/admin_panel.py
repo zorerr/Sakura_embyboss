@@ -232,8 +232,8 @@ async def change_for_timing(timing, tgid, call):
             b = _open.tem - a
             s = _open.all_user - _open.tem
             
-            # 使用统一的推送函数发送定时注册结束消息
-            await send_register_end_message("timing", _open.tem)
+            # 使用统一的推送函数发送定时注册结束消息，传入开始用户数
+            await send_register_end_message("timing", _open.tem, a)
             
             # 同时保留原有的管理员私信通知逻辑
             text = f'⏳** 注册结束**：\n\n🍉 目前席位：{_open.tem}\n🥝 新增席位：{b}\n🍋 剩余席位：{s}'
