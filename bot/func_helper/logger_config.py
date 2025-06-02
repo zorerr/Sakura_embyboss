@@ -6,6 +6,7 @@ Date:2023/12/12
 """
 import datetime
 import pytz
+import sys
 from loguru import logger
 
 # 转换为亚洲上海时区
@@ -28,22 +29,56 @@ def get_log_level():
                 config_data = json.load(f)
                 debug_log = config_data.get('debug_log', False)
                 return "DEBUG" if debug_log else "INFO"
+        else:
+            # 配置文件不存在时返回默认级别
+            return "INFO"
     except Exception:
         # 如果读取配置失败，默认使用INFO级别
         pass
     
     return "INFO"
 
-# 更新日志配置中的时间格式，确保记录的时间是东八区的时间
-log_config = {
+# 初始化logger配置（默认INFO级别）
+_default_config = {
     "sink": log_filename,
-    "format": log_format,  # 显示时区信息
-    "level": get_log_level(),  # 动态获取日志级别
-    "rotation": "00:00",  # rotation：一种条件，指示何时应关闭当前记录的文件并开始新的文件。
-    "retention": "30 days"  # retention ：过滤旧文件的指令，在循环或程序结束期间会删除旧文件。
+    "format": log_format,
+    "level": "INFO",  # 先使用默认INFO级别
+    "rotation": "00:00",
+    "retention": "30 days"
 }
-logger.add(**log_config)
 
+# 添加默认配置（文件输出）
+logger.add(**_default_config)
+
+# 添加控制台输出（可选，便于开发调试）
+logger.add(sys.stderr, format=log_format, level="INFO")
+
+def reconfigure_logger():
+    """重新配置logger，在config加载后调用"""
+    try:
+        # 移除所有现有的handler
+        logger.remove()
+        
+        # 获取正确的日志级别
+        log_level = get_log_level()
+        
+        # 重新添加文件logger
+        final_config = {
+            "sink": log_filename,
+            "format": log_format,
+            "level": log_level,
+            "rotation": "00:00",
+            "retention": "30 days"
+        }
+        logger.add(**final_config)
+        
+        # 重新添加控制台输出
+        logger.add(sys.stderr, format=log_format, level=log_level)
+        
+    except Exception as e:
+        # 如果重新配置失败，保持默认配置
+        logger.add(**_default_config)
+        logger.add(sys.stderr, format=log_format, level="INFO")
 
 def logu(name):
     """返回一个绑定名称的日志实例"""

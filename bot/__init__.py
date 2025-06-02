@@ -10,6 +10,12 @@ from .schemas import Config
 
 config = Config.load_config()
 
+# 在config加载后重新配置logger以使用正确的日志级别
+from .func_helper.logger_config import reconfigure_logger
+reconfigure_logger()
+
+# 重新获取logger实例以确保使用新的配置
+LOGGER = logu(__name__)
 
 def save_config():
     config.save_config()
