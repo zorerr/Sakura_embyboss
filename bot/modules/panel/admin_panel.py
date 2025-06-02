@@ -83,7 +83,7 @@ async def open_stats(_, call):
                f'🎫 总注册限制 | {all_user_display}\n🎟️ 已注册人数 | {tem}\n' \
                f'🎭 剩余可注册 | **{sur}**\n🤖 bot使用人数 | {tg}'
         await editMessage(call, text, buttons=back_free_ikb)
-        LOGGER.info(f"【admin】：管理员 {call.from_user.first_name} 关闭了自由注册")
+        LOGGER.info(f"【admin】-自由注册：管理员 {call.from_user.first_name} 手动关闭了自由注册")
     elif not stat:
         await callAnswer(call, '⭕ 自由注册设置')
         tg, current_users, white = sql_count_emby()
@@ -242,6 +242,8 @@ async def open_timing(_, call):
             # 使用统一的推送函数发送定时注册关闭消息
             await send_register_end_message("timing_closed", current_users, admin_name=call.from_user.first_name)
             
+            LOGGER.info(f"【admin】-定时注册：管理员 {call.from_user.first_name} 手动关闭了定时注册")
+            
             await callAnswer(call, "Ⓜ️【定时任务运行终止】\n\n**已为您停止**", True)
             await open_menu(_, call)
 
@@ -303,7 +305,7 @@ async def open_coin_register(_, call):
                f'💰 所需{sakura_b} | {_open.coin_cost}\n🎫 总注册限制 | {all_user_display}\n🎟️ 已注册人数 | {current_users}\n' \
                f'🎭 剩余可注册 | **{sur}**\n🤖 bot使用人数 | {tg}'
         await editMessage(call, text, buttons=back_free_ikb)
-        LOGGER.info(f"【admin】：管理员 {call.from_user.first_name} 关闭了{sakura_b}注册")
+        LOGGER.info(f"【admin】-{sakura_b}注册：管理员 {call.from_user.first_name} 手动关闭了{sakura_b}注册")
     elif not _open.coin_register:
         await callAnswer(call, f'⭕ {sakura_b}注册设置')
         await editMessage(call,
