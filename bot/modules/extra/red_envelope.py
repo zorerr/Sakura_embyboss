@@ -107,29 +107,11 @@ async def send_red_envelope(_, msg):
             )
 
         # 验证发送者资格
-        if msg.reply_to_message and red_envelope.allow_private:
-            try:
-                money = int(msg.command[1])
-                private_text = (
-                    msg.command[2]
-                    if len(msg.command) > 2
-                    else random.choice(Yulv.load_yulv().red_bag)
-                )
-            except (IndexError, ValueError):
-                return await asyncio.gather(
-                    msg.delete(),
-                    sendMessage(
-                        msg,
-                        "**🧧 专享红包：\n\n请回复某人 [数额][空格][个性化留言（可选）]**",
-                        timer=60,
-                    ),
-                )
-
-            verified, first_name, error = await verify_red_envelope_sender(
-                msg, money, is_private=True
-            )
-            if not verified:
-                return
+        verified, first_name, error = await verify_red_envelope_sender(
+            msg, money, is_private=True
+        )
+        if not verified:
+            return
 
         # 创建并发送红包
         reply, _ = await asyncio.gather(
@@ -163,20 +145,24 @@ async def send_red_envelope(_, msg):
     # 处理普通红包
     try:
         money = int(msg.command[1])
-        members = int(msg.command[2])
+        members = int(msg.command[2])  # 预先验证members参数
     except (IndexError, ValueError):
         return await asyncio.gather(
             msg.delete(),
             sendMessage(
                 msg,
-                f"**🧧 发红包：\n\n/red [总{sakura_b}数] [份数] [mode]**\n\n"
-                f"[mode]留空为拼手气, 任意值为均分\n专享红包请回复 + {sakura_b}",
+                f"**🧧 发红包格式：\n\n/red [金额] [份数] [mode]**\n\n"
+                f"**规则：**\n"
+                f"• 持有{sakura_b}≥5，发红包≥5\n"
+                f"• 金额≥份数，份数>0\n"
+                f"• mode留空=拼手气，任意值=均分\n"
+                f"• 专享红包：回复某人+金额",
                 timer=60,
             ),
         )
 
     # 验证发送者资格和红包参数
-    verified, first_name, error = await verify_red_envelope_sender(msg, money)
+    verified, first_name, error = await verify_red_envelope_sender(msg, money, members=members)
     if not verified:
         return
 
@@ -218,10 +204,18 @@ async def grab_red_envelope(_, call):
         return await callAnswer(call, "ʕ•̫͡•ʔ 你已经领取过红包了。不许贪吃", True)
 
     # 检查红包是否已抢完
-    if envelope.rest_members <= 0:
-        return await callAnswer(
-            call, "/(ㄒoㄒ)/~~ \n\n来晚了，红包已经被抢光啦。", True
-        )
+    if envelope.members > 0:
+        # 正数份数：检查剩余份数
+        if envelope.rest_members <= 0:
+            return await callAnswer(
+                call, "/(ㄒoㄒ)/~~ \n\n来晚了，红包已经被抢光啦。", True
+            )
+    else:
+        # 负数份数（管理员特权）：检查已领取次数是否达到绝对值
+        if len(envelope.receivers) >= abs(envelope.members):
+            return await callAnswer(
+                call, "/(ㄒoㄒ)/~~ \n\n来晚了，红包已经被抢光啦。", True
+            )
 
     amount = 0
     # 处理均分红包
@@ -233,19 +227,24 @@ async def grab_red_envelope(_, call):
         if call.from_user.id != envelope.target_user:
             return await callAnswer(call, "ʕ•̫͡•ʔ 这是你的专属红包吗？", True)
         amount = envelope.rest_money
-        await callAnswer(
-            call,
-            f"🧧恭喜，你领取到了\n{envelope.sender_name} の {amount}{sakura_b}\n\n{envelope.message}",
-            True,
-        )
 
     # 处理拼手气红包
     else:
-        if envelope.rest_members > 1:
-            k = 2 * envelope.rest_money / envelope.rest_members
-            amount = int(random.uniform(1, k))
+        if envelope.members > 0:
+            # 正数份数的拼手气红包
+            if envelope.rest_members > 1:
+                k = 2 * envelope.rest_money / envelope.rest_members
+                amount = int(random.uniform(1, k))
+            else:
+                amount = envelope.rest_money
         else:
-            amount = envelope.rest_money
+            # 负数份数的拼手气红包（管理员特权）
+            remaining_count = abs(envelope.members) - len(envelope.receivers)
+            if remaining_count > 1:
+                k = 2 * envelope.rest_money / remaining_count
+                amount = int(random.uniform(1, k))
+            else:
+                amount = envelope.rest_money
 
     # 更新用户余额
     new_balance = e.iv + amount
@@ -259,12 +258,24 @@ async def grab_red_envelope(_, call):
     envelope.rest_money -= amount
     envelope.rest_members -= 1
 
-    await callAnswer(
-        call, f"🧧恭喜，你领取到了\n{envelope.sender_name} の {amount}{sakura_b}", True
-    )
+    # 专享红包特殊提示
+    if envelope.type == "private":
+        await callAnswer(
+            call,
+            f"🧧恭喜，你领取到了\n{envelope.sender_name} の {amount}{sakura_b}\n\n{envelope.message}",
+            True,
+        )
+    else:
+        await callAnswer(
+            call, f"🧧恭喜，你领取到了\n{envelope.sender_name} の {amount}{sakura_b}", True
+        )
 
     # 处理红包抢完后的展示
-    if envelope.rest_members == 0:
+    # 判断红包是否已完成：正数份数看rest_members，负数份数看已领取次数
+    is_finished = (envelope.members > 0 and envelope.rest_members == 0) or \
+                  (envelope.members < 0 and len(envelope.receivers) >= abs(envelope.members))
+    
+    if is_finished:
         red_envelopes.pop(red_id)
         text = await generate_final_message(envelope)
         n = 2048
@@ -276,52 +287,127 @@ async def grab_red_envelope(_, call):
                 await call.message.reply(chunk)
 
 
-async def verify_red_envelope_sender(msg, money, is_private=False):
+async def verify_red_envelope_sender(msg, money, is_private=False, members=None):
     """验证发红包者资格
 
     Args:
         msg: 消息对象
         money: 红包金额
         is_private: 是否为专享红包
+        members: 红包份数（普通红包）
 
     Returns:
         tuple: (验证是否通过, 发送者名称, 错误信息)
     """
     if not msg.sender_chat:
         e = sql_get_emby(tg=msg.from_user.id)
+        
+        # 检查是否为管理员
+        is_admin = judge_admins(msg.from_user.id)
+        
+        # 基础验证条件
         conditions = [
             e,  # 用户存在
-            e.iv >= money if e else False,  # 余额充足
-            money >= 5,  # 红包金额不小于5
             e.iv >= 5 if e else False,  # 持有金额不小于5
         ]
+        
+        # 金额和余额检查 - 区分管理员和普通用户
+        if is_admin:
+            # 管理员可以发负数金额，余额检查逻辑需要特殊处理
+            if money >= 0:
+                # 正数金额：检查余额是否足够
+                conditions.extend([
+                    e.iv >= money if e else False,  # 余额充足
+                    money >= 5,  # 金额不小于5
+                ])
+            else:
+                # 负数金额：管理员可以发任意负数金额，不需要检查余额和金额限制
+                pass  # 不添加额外条件
+        else:
+            # 普通用户：保持原有严格验证
+            conditions.extend([
+                e.iv >= money if e else False,  # 余额充足
+                money >= 5,  # 红包金额不小于5（已包含>0检查）
+            ])
 
         if is_private:
             # 专享红包额外检查 不能发给自己
             conditions.append(msg.reply_to_message.from_user.id != msg.from_user.id)
         else:
             # 普通红包额外检查
-            conditions.append(money >= int(msg.command[2]))  # 金额不小于份数
+            if members is None:
+                # 如果没有传入members，尝试从命令中解析（保持向后兼容）
+                try:
+                    members = int(msg.command[2])
+                except (IndexError, ValueError):
+                    # 格式错误处理
+                    return await asyncio.gather(
+                        msg.delete(),
+                        sendMessage(
+                            msg,
+                            "**🧧 专享红包格式：**\n\n回复某人 [金额] [留言]（可选）\n\n"
+                            f"**规则：**持有{sakura_b}≥5，发红包≥5",
+                            timer=60,
+                        ),
+                    )
+                    return False, None, "格式错误"
+            
+            # 管理员可以发负数金额红包，普通用户不可以
+            if is_admin:
+                conditions.extend([
+                    members > 0,  # 份数必须为正数
+                    abs(money) >= members  # 金额绝对值不小于份数
+                ])
+            else:
+                conditions.extend([
+                    members > 0,  # 份数必须为正数
+                    money >= members  # 金额不小于份数
+                ])
+
+        # 调试信息：如果是管理员且金额为负数，显示详细的验证状态
+        # 临时调试代码，测试完成后移除
+        # if is_admin and money < 0:
+        #     debug_info = f"调试信息 - 管理员:{is_admin}, 金额:{money}, 份数:{members}, 用户存在:{bool(e)}, 余额:{e.iv if e else 'N/A'}"
+        #     await sendMessage(msg, debug_info, timer=10)
 
         if not all(conditions):
             error_msg = (
                 f"[{msg.from_user.first_name}](tg://user?id={msg.from_user.id}) "
-                f"违反规则，禁言一分钟。\nⅰ 所持有{sakura_b}不得小于5\nⅱ 发出{sakura_b}不得小于5"
+                f"违反规则，禁言一分钟。\nⅰ 所持有{sakura_b}不得小于5\nⅱ 发出{sakura_b}不得小于5\nⅲ 金额和份数必须大于0"
             )
             if is_private:
-                error_msg += "\nⅲ 不许发自己"
+                error_msg += "\nⅳ 不许发自己"
             else:
-                error_msg += "\nⅲ 未私聊过bot"
+                # 使用已经定义的is_admin变量
+                if is_admin:
+                    error_msg += "\nⅳ 金额不得小于份数数量\nⅴ 份数不能为0\nⅵ 未私聊过bot"
+                else:
+                    error_msg += "\nⅳ 金额不得小于份数\nⅴ 未私聊过bot"
 
-            await asyncio.gather(
-                msg.delete(),
-                msg.chat.restrict_member(
-                    msg.from_user.id,
-                    ChatPermissions(),
-                    datetime.now() + timedelta(minutes=1),
-                ),
-                sendMessage(msg, error_msg, timer=60),
-            )
+            if is_admin:
+                # 管理员违反规则：只发送错误消息，不禁言
+                await asyncio.gather(
+                    msg.delete(),
+                    sendMessage(msg, error_msg, timer=60),
+                )
+            else:
+                # 普通用户违反规则：尝试禁言，然后发送错误消息
+                ban_success = True
+                try:
+                    await msg.chat.restrict_member(
+                        msg.from_user.id,
+                        ChatPermissions(),
+                        datetime.now() + timedelta(minutes=1),
+                    )
+                except Exception as ex:
+                    ban_success = False
+                
+                # 根据禁言结果发送消息
+                final_error_msg = error_msg if ban_success else error_msg + "\n(禁言失败)"
+                await asyncio.gather(
+                    msg.delete(),
+                    sendMessage(msg, final_error_msg, timer=60),
+                )
             return False, None, error_msg
 
         # 验证通过,扣除余额
