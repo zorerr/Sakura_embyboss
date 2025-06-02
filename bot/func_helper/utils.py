@@ -1,5 +1,6 @@
 import pytz
 import asyncio
+import time
 
 from bot import bot, _open, save_config, owner, admins, bot_name, ranks, schedall, group, config
 from bot.sql_helper.sql_code import sql_add_code
@@ -10,7 +11,7 @@ cache = Cache()
 
 # 注册并发控制配置
 REGISTRATION_SEMAPHORE = asyncio.Semaphore(8)  # 最多8个并发注册
-REGISTRATION_QUEUE = {}  # 注册队列状态跟踪
+REGISTRATION_QUEUE = []  # 注册队列 - 使用列表存储排队用户
 REGISTRATION_STATS = {
     'total_registrations': 0,
     'concurrent_registrations': 0,
@@ -29,35 +30,42 @@ class RegistrationController:
         """添加用户到注册队列"""
         async with _queue_lock:
             # 检查用户是否已经在队列中
-            if user_id in REGISTRATION_QUEUE:
-                return None  # 用户已在队列中
+            for item in REGISTRATION_QUEUE:
+                if item['user_id'] == user_id:
+                    return None  # 用户已在队列中
             
             queue_position = len(REGISTRATION_QUEUE) + 1
-            REGISTRATION_QUEUE[user_id] = {
-                'position': queue_position,
+            REGISTRATION_QUEUE.append({
+                'user_id': user_id,
                 'user_name': user_name,
-                'start_time': asyncio.get_event_loop().time(),
+                'position': queue_position,
+                'start_time': time.time(),
                 'status': 'waiting'
-            }
+            })
             return queue_position
     
     @staticmethod
     async def remove_from_queue(user_id):
         """从队列中移除用户"""
         async with _queue_lock:
-            REGISTRATION_QUEUE.pop(user_id, None)
+            REGISTRATION_QUEUE[:] = [item for item in REGISTRATION_QUEUE if item['user_id'] != user_id]
     
     @staticmethod
     async def update_status(user_id, status):
         """更新用户状态（线程安全）"""
         async with _queue_lock:
-            if user_id in REGISTRATION_QUEUE:
-                REGISTRATION_QUEUE[user_id]['status'] = status
+            for item in REGISTRATION_QUEUE:
+                if item['user_id'] == user_id:
+                    item['status'] = status
+                    break
     
     @staticmethod
     async def get_queue_status(user_id):
         """获取用户在队列中的状态"""
-        return REGISTRATION_QUEUE.get(user_id)
+        for item in REGISTRATION_QUEUE:
+            if item['user_id'] == user_id:
+                return item
+        return None
     
     @staticmethod
     async def get_queue_length():
@@ -68,98 +76,116 @@ async def register_with_concurrency_control(user_id, user_name, func, *args, **k
     """
     注册并发控制包装器 - 防止同时过多注册请求
     """
+    # 导入必要的模块（避免作用域冲突）
     from bot.sql_helper.sql_emby import sql_count_emby
     from bot import _open, bot, LOGGER
     
-    # 第一次人数检查：在加入队列前
+    # 预先获取用户计数，避免重复查询
     tg, current_count, white = sql_count_emby()
     if _open.all_user != 999999 and current_count >= _open.all_user:
         try:
-            await bot.send_message(user_id, f"🚫 很抱歉，注册已满员\n\n当前用户数：{current_count}/{_open.all_user}")
+            await bot.send_message(user_id, f"🚫 很抱歉，注册已满员\\n\\n当前用户数：{current_count}/{_open.all_user}")
         except Exception:
             pass
         LOGGER.info(f"【注册限制】用户 {user_id} 尝试注册被拒绝：已达人数上限 {current_count}/{_open.all_user}")
         return None
     
-    # 检查队列长度
-    async with _queue_lock:
-        current_queue_length = len(REGISTRATION_QUEUE)
-    
-    if current_queue_length >= 25:
-        try:
-            await bot.send_message(user_id, f"🚫 注册人数过多，请稍后再试\n\n当前排队：{current_queue_length}/25")
-        except Exception:
-            pass
-        return None
-    
-    # 添加到队列
-    queue_position = await RegistrationController.add_to_queue(user_id, user_name)
-    if queue_position is None:
-        try:
-            await bot.send_message(user_id, "⚠️ 您已在注册队列中，请耐心等待")
-        except Exception:
-            pass
-        return None
-    
+    # 优化的快速检查：非阻塞方式检查资源可用性
+    current_queue_length = len(REGISTRATION_QUEUE)
     try:
-        # 发送队列位置通知
-        if queue_position > 1:
+        # 使用极短超时实现非阻塞信号量检查
+        await asyncio.wait_for(REGISTRATION_SEMAPHORE.acquire(), timeout=0.001)
+        
+        # 成功获取信号量后，优先处理（无论是否有队列）
+        # 这避免了获取后又释放的资源浪费
+        start_time = time.time()
+        if current_queue_length == 0:
+            LOGGER.info(f"【快速通道】用户 {user_id}({user_name}) 开始注册 - 无队列等待")
+        else:
+            LOGGER.info(f"【优先处理】用户 {user_id}({user_name}) 开始注册 - 获得信号量优先权")
+        
+        try:
+            result = await func(*args, **kwargs)
+            process_time = time.time() - start_time
+            if current_queue_length == 0:
+                LOGGER.info(f"【快速通道】用户 {user_id}({user_name}) 注册完成 - 耗时 {process_time:.2f}秒")
+            else:
+                LOGGER.info(f"【优先处理】用户 {user_id}({user_name}) 注册完成 - 耗时 {process_time:.2f}秒")
+            return result
+        except Exception as e:
+            LOGGER.error(f"【注册失败】用户 {user_id}({user_name}) 注册失败: {e}")
+            return None  # 返回None而不是抛出异常
+        finally:
+            REGISTRATION_SEMAPHORE.release()
+            
+    except Exception as e:
+        # 使用 Exception 捕获所有异常而不是特定的 asyncio.TimeoutError
+        # 因为 asyncio.wait_for 超时时会正常返回，不会抛出异常
+        LOGGER.debug(f"【信号量检查】用户 {user_id}({user_name}) 信号量不可用: {e}")
+        pass
+    
+    # 队列模式 - 优化的队列管理
+    queue_start_time = time.time()
+    queue_position = None
+    
+    # 快速队列操作 - 减少锁持有时间
+    async with _queue_lock:
+        queue_position = len(REGISTRATION_QUEUE) + 1
+        REGISTRATION_QUEUE.append({
+            'user_id': user_id,
+            'user_name': user_name, 
+            'join_time': queue_start_time
+        })
+    
+    LOGGER.info(f"【队列模式】用户 {user_id}({user_name}) 加入注册队列，位置: {queue_position}")
+    
+    # 获取信号量（进入队列等待）
+    semaphore_acquired = False
+    try:
+        # 优化的信号量等待 - 使用更短的超时时间
+        try:
+            await asyncio.wait_for(REGISTRATION_SEMAPHORE.acquire(), timeout=180.0)  # 3分钟超时
+            semaphore_acquired = True
+        except Exception as timeout_error:
+            # 捕获所有超时相关的异常
+            LOGGER.warning(f"【队列超时】用户 {user_id}({user_name}) 等待信号量超时: {timeout_error}")
             try:
-                await bot.send_message(user_id, f"📋 您已加入注册队列\n排队位置：第 {queue_position} 位")
+                await bot.send_message(user_id, "🚫 注册队列等待超时，请稍后重试")
             except Exception:
                 pass
+            return None
         
-        # 获取信号量（等待轮到自己）
-        async with REGISTRATION_SEMAPHORE:
-            try:
-                # 第二次人数检查：在开始注册前（获取信号量后）
-                tg, current_count_final, white = sql_count_emby()
-                if _open.all_user != 999999 and current_count_final >= _open.all_user:
-                    try:
-                        await bot.send_message(user_id, f"🚫 注册期间已达人数限制\n\n当前用户数：{current_count_final}/{_open.all_user}\n\n您的注册已取消")
-                    except Exception:
-                        pass
-                    LOGGER.info(f"【注册限制】用户 {user_id} 注册被取消：注册期间达到人数上限 {current_count_final}/{_open.all_user}")
-                    return None
-                
-                # 更新状态为处理中
-                await RegistrationController.update_status(user_id, 'processing')
-                
-                # 执行实际注册
-                result = await func(*args, **kwargs)
-                
-                # 更新统计
-                REGISTRATION_STATS['total_registrations'] += 1
-                if result:
-                    LOGGER.info(f"【注册成功】用户 {user_id}({user_name}) 注册完成")
-                else:
-                    REGISTRATION_STATS['failed_registrations'] += 1
-                    LOGGER.warning(f"【注册失败】用户 {user_id}({user_name}) 注册失败")
-                
-                return result
-                
-            except Exception as e:
-                REGISTRATION_STATS['failed_registrations'] += 1
-                LOGGER.error(f"【注册异常】用户 {user_id}({user_name}) 注册出现异常: {str(e)}")
-                try:
-                    await bot.send_message(user_id, f"❌ 注册过程中发生错误，请稍后重试")
-                except Exception:
-                    pass
-                return None
-                
-    finally:
-        # 清理队列（确保在所有情况下都能清理）
+        # 获取信号量后，立即执行注册
+        wait_time = time.time() - queue_start_time
+        start_time = time.time()
+        LOGGER.info(f"【队列处理】用户 {user_id}({user_name}) 开始注册 - 等待时间 {wait_time:.2f}秒")
+        
         try:
-            await RegistrationController.remove_from_queue(user_id)
+            result = await func(*args, **kwargs)
+            process_time = time.time() - start_time
+            total_time = time.time() - queue_start_time
+            LOGGER.info(f"【队列完成】用户 {user_id}({user_name}) 注册完成 - 处理时间 {process_time:.2f}秒，总时间 {total_time:.2f}秒")
+            return result
         except Exception as e:
-            LOGGER.error(f"【队列清理】清理用户 {user_id} 队列状态失败: {str(e)}")
-        
-        # 更新并发计数
+            LOGGER.error(f"【队列失败】用户 {user_id}({user_name}) 注册失败: {e}")
+            return None  # 返回None而不是抛出异常
+    
+    except Exception as e:
+        LOGGER.error(f"【注册异常】用户 {user_id}({user_name}) 注册异常: {e}")
         try:
-            async with _queue_lock:
-                REGISTRATION_STATS['concurrent_registrations'] = len(REGISTRATION_QUEUE)
+            await bot.send_message(user_id, f"🚫 注册过程发生错误: {str(e)}")
         except Exception:
             pass
+        return None
+        
+    finally:
+        # 确保资源清理
+        if semaphore_acquired:
+            REGISTRATION_SEMAPHORE.release()
+        
+        # 快速队列清理
+        async with _queue_lock:
+            REGISTRATION_QUEUE[:] = [item for item in REGISTRATION_QUEUE if item['user_id'] != user_id]
 
 
 def judge_admins(uid):

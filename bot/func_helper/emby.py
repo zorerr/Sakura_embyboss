@@ -96,44 +96,93 @@ class Embyservice(metaclass=Singleton):
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36 Edg/114.0.1823.82'
         }
 
-    async def emby_create(self, name, us: int):
+    async def emby_create(self, name, us: int, progress_callback=None):
         """
         创建账户
         :param name: emby_name
         :param us: us 积分
+        :param progress_callback: 进度回调函数
         :return: bool
         """
         ex = (datetime.now() + timedelta(days=us))
         name_data = ({"Name": name})
-        new_user = r.post(f'{self.url}/emby/Users/New',
-                          headers=self.headers,
-                          json=name_data)
+        
+        if progress_callback:
+            await progress_callback("正在创建用户账户...")
+        
+        # 创建用户，添加超时和重试
+        max_retries = 2
+        for attempt in range(max_retries + 1):
+            try:
+                new_user = r.post(f'{self.url}/emby/Users/New',
+                                headers=self.headers,
+                                json=name_data,
+                                timeout=15)
+                break
+            except (r.exceptions.Timeout, r.exceptions.ConnectionError) as e:
+                if attempt == max_retries:
+                    LOGGER.error(f'创建账户 {name} 超时/连接失败，重试{max_retries}次后仍失败: {e}')
+                    return False
+                LOGGER.warning(f'创建账户 {name} 第{attempt+1}次尝试失败，正在重试...')
+                continue
+        
         if new_user.status_code == 200 or new_user.status_code == 204:
             try:
                 id = new_user.json()["Id"]
                 pwd = await pwd_create(8)
                 pwd_data = pwd_policy(id, new=pwd)
-                _pwd = r.post(f'{self.url}/emby/Users/{id}/Password',
-                              headers=self.headers,
-                              json=pwd_data)
+                
+                if progress_callback:
+                    await progress_callback("正在设置账户密码...")
+                
+                # 设置密码，添加超时和重试
+                for attempt in range(max_retries + 1):
+                    try:
+                        _pwd = r.post(f'{self.url}/emby/Users/{id}/Password',
+                                    headers=self.headers,
+                                    json=pwd_data,
+                                    timeout=15)
+                        break
+                    except (r.exceptions.Timeout, r.exceptions.ConnectionError) as e:
+                        if attempt == max_retries:
+                            LOGGER.error(f'设置账户 {name} 密码超时/连接失败，重试{max_retries}次后仍失败: {e}')
+                            return False
+                        LOGGER.warning(f'设置账户 {name} 密码第{attempt+1}次尝试失败，正在重试...')
+                        continue
+                        
             except Exception as e:
                 LOGGER.error(f'创建账户 {name} 失败，原因: {e}')
                 return False
             else:
+                if progress_callback:
+                    await progress_callback("正在配置用户策略...")
+                    
                 policy = create_policy(False, False)
-                try:
-                    _policy = r.post(f'{self.url}/emby/Users/{id}/Policy',
-                                     headers=self.headers,
-                                     json=policy)  # .encode('utf-8')
-                except Exception as e:
-                    LOGGER.error(f'设置账户 {name} 策略失败，原因: {e}')
-                    return False
+                
+                # 设置策略，添加超时和重试
+                for attempt in range(max_retries + 1):
+                    try:
+                        _policy = r.post(f'{self.url}/emby/Users/{id}/Policy',
+                                       headers=self.headers,
+                                       json=policy,
+                                       timeout=15)
+                        break
+                    except (r.exceptions.Timeout, r.exceptions.ConnectionError) as e:
+                        if attempt == max_retries:
+                            LOGGER.error(f'设置账户 {name} 策略超时/连接失败，重试{max_retries}次后仍失败: {e}')
+                            return False
+                        LOGGER.warning(f'设置账户 {name} 策略第{attempt+1}次尝试失败，正在重试...')
+                        continue
+                        
+                if _policy.status_code == 200 or _policy.status_code == 204:
+                    if progress_callback:
+                        await progress_callback("正在完成注册...")
+                    return id, pwd, ex
                 else:
-                    if _policy.status_code == 200 or _policy.status_code == 204:
-                        return id, pwd, ex
-                    else:
-                        return False
+                    LOGGER.error(f'设置账户 {name} 策略失败，状态码: {_policy.status_code}')
+                    return False
         else:
+            LOGGER.error(f'创建账户 {name} 失败，状态码: {new_user.status_code}')
             return False
 
     async def emby_del(self, id):

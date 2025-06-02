@@ -29,13 +29,89 @@ from bot.sql_helper.sql_emby2 import sql_get_emby2, sql_delete_emby2
 
 # 登录提醒文本
 LOGIN_REMINDER = (
-    "  🔔 **首次登录提醒**：\n"
+    "\n\n   🔔 **首次登录提醒**：\n"
     "· 🌐 请使用上述线路地址登录客户端使用\n"
     "· 📱 建议下载三方Emby客户端获得最佳体验\n"
     "· 🔐 请妥善保管您的账号密码信息\n"
     "· ⏰ 请及时登录，防止被封禁\n"
+    "· 🚫 请勿泄露线路信息，否则封禁\n"
     "· ❓ 如遇登录问题请联系群组管理员"
 )
+
+# 异步后台任务处理函数
+async def _handle_post_registration_tasks(user_id, _open, save_config):
+    """
+    后台处理注册后的额外任务，不阻塞用户体验
+    """
+    try:
+        # 用户创建成功后，检查是否达到限制并发送相应推送
+        from bot.sql_helper.sql_emby import sql_count_emby
+        from bot.func_helper.utils import send_register_end_message
+        tg, current_users, white = sql_count_emby()
+        
+        # 添加超额监控检查
+        try:
+            from bot.func_helper.utils import check_registration_overflow
+            overflow_count = await check_registration_overflow()
+            if overflow_count > 0:
+                LOGGER.warning(f"【超额检测】用户 {user_id} 注册后检测到超额 {overflow_count} 人")
+        except Exception as e:
+            LOGGER.error(f"【监控异常】超额检查失败: {str(e)}")
+        
+        if _open.all_user != 999999 and current_users >= _open.all_user:
+            LOGGER.info(f"【自动结束检测】达到人数限制 {current_users}/{_open.all_user}")
+            if _open.coin_register:
+                LOGGER.info(f"【自动结束】关闭积分注册，当前用户数：{current_users}")
+                _open.coin_register = False
+                save_config()
+                # 发送{sakura_b}注册结束推送到群组
+                await send_register_end_message("coin", current_users, current_users - 1)
+                LOGGER.info(f"【自动结束】积分注册群组推送已发送")
+                
+                # 发送私信通知给管理员（仿照定时注册的逻辑）
+                remaining_seats = _open.all_user - current_users if _open.all_user != 999999 else "无限制"
+                admin_text = f'💰** {sakura_b}注册结束**：\n\n🍉 目前席位：{current_users}\n🥝 新增席位：1\n🍋 剩余席位：{remaining_seats}'
+                try:
+                    from bot import bot, owner
+                    from bot.func_helper.msg_utils import deleteMessage
+                    admin_msg = await bot.send_message(owner, admin_text)
+                    await deleteMessage(admin_msg, 30)
+                    LOGGER.info(f"【自动结束】积分注册管理员私信已发送")
+                except Exception as e:
+                    LOGGER.error(f"发送管理员私信通知失败: {e}")
+                
+            elif _open.stat and _open.timing == 0:  # 自由注册（非定时）
+                LOGGER.info(f"【自动结束】关闭自由注册，当前用户数：{current_users}")
+                _open.stat = False
+                save_config()
+                # 发送自由注册结束推送到群组
+                await send_register_end_message("free", current_users, current_users - 1)
+                LOGGER.info(f"【自动结束】自由注册群组推送已发送")
+                
+                # 发送私信通知给管理员（仿照定时注册的逻辑）
+                remaining_seats = _open.all_user - current_users if _open.all_user != 999999 else "无限制"
+                admin_text = f'🆓** 自由注册结束**：\n\n🍉 目前席位：{current_users}\n🥝 新增席位：1\n🍋 剩余席位：{remaining_seats}'
+                try:
+                    from bot import bot, owner
+                    from bot.func_helper.msg_utils import deleteMessage
+                    admin_msg = await bot.send_message(owner, admin_text)
+                    await deleteMessage(admin_msg, 30)
+                    LOGGER.info(f"【自动结束】自由注册管理员私信已发送")
+                except Exception as e:
+                    LOGGER.error(f"发送管理员私信通知失败: {e}")
+                
+            elif _open.stat and _open.timing > 0:  # 定时注册
+                LOGGER.info(f"【自动结束】关闭定时注册，当前用户数：{current_users}")
+                _open.timing = 0
+                _open.stat = False
+                save_config()
+                # 发送定时注册结束推送到群组
+                await send_register_end_message("timing", current_users, current_users - 1)
+                LOGGER.info(f"【自动结束】定时注册群组推送已发送")
+                # 注意：定时注册的管理员私信通知由admin_panel.py的change_for_timing函数处理
+                
+    except Exception as e:
+        LOGGER.error(f"【后台任务】用户 {user_id} 后台任务处理异常: {str(e)}")
 
 # 创号函数
 async def create_user_internal(_, call, us, stats, deduct_coins=False, coin_cost=0):
@@ -101,34 +177,90 @@ async def create_user_internal(_, call, us, stats, deduct_coins=False, coin_cost
                 pass
             return None
         
+        # 简化的进度显示 - 统一的初始消息
         send = await msg.reply(
-            f'🆗 会话结束，收到设置\n\n用户名：**{emby_name}**  安全码：**{emby_pwd2}** \n\n__正在为您初始化账户，更新用户策略__......')
+            f'🆗 会话结束，收到设置\n\n用户名：**{emby_name}**  安全码：**{emby_pwd2}** \n\n'
+            f'⚡ **正在为您创建账户...**\n'
+            f'📋 1/4 正在创建用户账户...\n'
+            f'🔒 2/4 正在设置账户密码...\n'
+            f'⚙️ 3/4 正在配置用户策略...\n'
+            f'💾 4/4 正在更新数据库...\n\n'
+            f'⏱️ 预计完成时间：15-30秒'
+        )
+        
+        # 优化的进度回调函数
+        async def update_progress(message):
+            """简化的进度更新函数"""
+            try:
+                base_info = f'用户名：**{emby_name}**  安全码：**{emby_pwd2}**'
+                
+                if "正在创建用户账户" in message:
+                    step_text = f'🆗 会话结束，收到设置\n\n{base_info}\n\n' \
+                               f'⚡ **正在为您创建账户...**\n' \
+                               f'✅ 1/4 正在创建用户账户... **进行中**\n' \
+                               f'⚪ 2/4 正在设置账户密码...\n' \
+                               f'⚪ 3/4 正在配置用户策略...\n' \
+                               f'⚪ 4/4 正在更新数据库...\n\n' \
+                               f'⏱️ 预计完成时间：15-30秒'
+                elif "正在设置账户密码" in message:
+                    step_text = f'🆗 会话结束，收到设置\n\n{base_info}\n\n' \
+                               f'⚡ **正在为您创建账户...**\n' \
+                               f'✅ 1/4 账户创建完成\n' \
+                               f'✅ 2/4 正在设置账户密码... **进行中**\n' \
+                               f'⚪ 3/4 正在配置用户策略...\n' \
+                               f'⚪ 4/4 正在更新数据库...\n\n' \
+                               f'⏱️ 预计完成时间：15-30秒'
+                elif "正在配置用户策略" in message:
+                    step_text = f'🆗 会话结束，收到设置\n\n{base_info}\n\n' \
+                               f'⚡ **正在为您创建账户...**\n' \
+                               f'✅ 1/4 账户创建完成\n' \
+                               f'✅ 2/4 密码设置完成\n' \
+                               f'✅ 3/4 正在配置用户策略... **进行中**\n' \
+                               f'⚪ 4/4 正在更新数据库...\n\n' \
+                               f'⏱️ 预计完成时间：10-15秒'
+                elif "正在完成注册" in message:
+                    step_text = f'🆗 会话结束，收到设置\n\n{base_info}\n\n' \
+                               f'⚡ **正在为您创建账户...**\n' \
+                               f'✅ 1/4 账户创建完成\n' \
+                               f'✅ 2/4 密码设置完成\n' \
+                               f'✅ 3/4 策略配置完成\n' \
+                               f'✅ 4/4 正在更新数据库... **进行中**\n\n' \
+                               f'⏱️ 即将完成...'
+                else:
+                    return  # 未识别的消息，跳过更新
+                
+                await send.edit_text(step_text)
+                LOGGER.debug(f"【进度更新】用户 {user_id} 进度更新: {message}")
+            except Exception as progress_error:
+                LOGGER.warning(f"【进度更新】用户 {user_id} 进度显示失败: {progress_error}")
         
         # 添加超时控制的emby api操作
         try:
-            data = await asyncio.wait_for(emby.emby_create(emby_name, us), timeout=60.0)
+            LOGGER.info(f"【开始注册】用户 {user_id}({user_name}) 开始创建Emby账户")
+            data = await asyncio.wait_for(emby.emby_create(emby_name, us, progress_callback=update_progress), timeout=60.0)
         except asyncio.TimeoutError:
             await editMessage(send,
                               '**❌ 注册超时，可能是服务器繁忙，请稍后重试**',
                               re_create_ikb)
-            LOGGER.error("【创建账户】：Emby API调用超时")
+            LOGGER.error(f"【创建账户】用户 {user_id} Emby API调用超时")
             return None
         except Exception as e:
             await editMessage(send,
                               f'**❌ 创建账户时发生错误：{str(e)}**',
                               re_create_ikb)
-            LOGGER.error(f"【创建账户】：API调用异常 - {str(e)}")
+            LOGGER.error(f"【创建账户】用户 {user_id} API调用异常 - {str(e)}")
             return None
             
         if not data:
             await editMessage(send,
                               '**- ❎ 已有此账户名，请重新输入注册\n- ❎ 或检查有无特殊字符\n- ❎ 或emby服务器连接不通，会话已结束！**',
                               re_create_ikb)
-            LOGGER.error("【创建账户】：重复账户 or 未知错误！")
+            LOGGER.error(f"【创建账户】用户 {user_id} 重复账户 or 未知错误！")
             return None
         
         # 解包emby创建结果
         eid, pwd, ex = data
+        LOGGER.info(f"【账户创建】用户 {user_id} Emby账户创建成功，ID: {eid}")
         
         # 创建成功后才扣除积分（如果需要）
         if deduct_coins and coin_cost > 0:
@@ -144,12 +276,14 @@ async def create_user_internal(_, call, us, stats, deduct_coins=False, coin_cost
                         # 积分扣除失败，需要删除已创建的emby账户
                         await emby.emby_del(id=eid)
                         await editMessage(send, '❌ 积分扣除失败，注册已回滚', re_create_ikb)
+                        LOGGER.error(f"【积分扣除】用户 {user_id} 积分扣除失败，已回滚")
                         return None
                 else:
                     # 积分不足，删除已创建的emby账户
                     await emby.emby_del(id=eid)
                     current_iv = current_data.iv if current_data else 0
                     await editMessage(send, f'❌ 积分不足，需要 {coin_cost} 个，当前仅有 {current_iv} 个', re_create_ikb)
+                    LOGGER.warning(f"【积分不足】用户 {user_id} 积分不足，需要 {coin_cost}，当前 {current_iv}")
                     return None
             except Exception as e:
                 # 积分操作异常，删除已创建的emby账户
@@ -158,14 +292,31 @@ async def create_user_internal(_, call, us, stats, deduct_coins=False, coin_cost
                 LOGGER.error(f"【积分操作】用户 {user_id} 积分操作异常: {str(e)}")
                 return None
         
-        # 更新数据库
+        # 优化的数据库更新 - 使用异步包装和合并操作
         try:
-            if stats:
-                success = sql_update_emby(Emby.tg == user_id, embyid=eid, name=emby_name, pwd=pwd, 
-                                        pwd2=emby_pwd2, lv='b', cr=datetime.now(), ex=ex)
-            else:
-                success = sql_update_emby(Emby.tg == user_id, embyid=eid, name=emby_name, pwd=pwd,
-                                        pwd2=emby_pwd2, lv='b', cr=datetime.now(), ex=ex, us=0)
+            # 准备更新数据
+            update_data = {
+                'embyid': eid, 
+                'name': emby_name, 
+                'pwd': pwd,
+                'pwd2': emby_pwd2, 
+                'lv': 'b', 
+                'cr': datetime.now(), 
+                'ex': ex
+            }
+            if not stats:
+                update_data['us'] = 0
+            
+            # 异步执行数据库更新
+            from concurrent.futures import ThreadPoolExecutor
+            
+            loop = asyncio.get_event_loop()
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                success = await loop.run_in_executor(
+                    executor, 
+                    lambda: sql_update_emby(Emby.tg == user_id, **update_data)
+                )
+                
         except Exception as e:
             # 数据库更新异常，回滚所有操作
             await emby.emby_del(id=eid)
@@ -180,71 +331,8 @@ async def create_user_internal(_, call, us, stats, deduct_coins=False, coin_cost
             return None
         
         if success:
-            # 用户创建成功后，检查是否达到限制并发送相应推送
-            from bot.sql_helper.sql_emby import sql_count_emby
-            from bot.func_helper.utils import send_register_end_message
-            tg, current_users, white = sql_count_emby()
-            
-            # 添加超额监控检查
-            try:
-                from bot.func_helper.utils import check_registration_overflow
-                overflow_count = await check_registration_overflow()
-                if overflow_count > 0:
-                    LOGGER.warning(f"【超额检测】用户 {user_id} 注册后检测到超额 {overflow_count} 人")
-            except Exception as e:
-                LOGGER.error(f"【监控异常】超额检查失败: {str(e)}")
-            
-            if _open.all_user != 999999 and current_users >= _open.all_user:
-                LOGGER.info(f"【自动结束检测】达到人数限制 {current_users}/{_open.all_user}")
-                if _open.coin_register:
-                    LOGGER.info(f"【自动结束】关闭积分注册，当前用户数：{current_users}")
-                    _open.coin_register = False
-                    save_config()
-                    # 发送{sakura_b}注册结束推送到群组
-                    await send_register_end_message("coin", current_users, current_users - 1)
-                    LOGGER.info(f"【自动结束】积分注册群组推送已发送")
-                    
-                    # 发送私信通知给管理员（仿照定时注册的逻辑）
-                    remaining_seats = _open.all_user - current_users if _open.all_user != 999999 else "无限制"
-                    admin_text = f'💰** {sakura_b}注册结束**：\n\n🍉 目前席位：{current_users}\n🥝 新增席位：1\n🍋 剩余席位：{remaining_seats}'
-                    try:
-                        from bot import bot, owner
-                        from bot.func_helper.msg_utils import deleteMessage
-                        admin_msg = await bot.send_message(owner, admin_text)
-                        await deleteMessage(admin_msg, 30)
-                        LOGGER.info(f"【自动结束】积分注册管理员私信已发送")
-                    except Exception as e:
-                        LOGGER.error(f"发送管理员私信通知失败: {e}")
-                    
-                elif _open.stat and _open.timing == 0:  # 自由注册（非定时）
-                    LOGGER.info(f"【自动结束】关闭自由注册，当前用户数：{current_users}")
-                    _open.stat = False
-                    save_config()
-                    # 发送自由注册结束推送到群组
-                    await send_register_end_message("free", current_users, current_users - 1)
-                    LOGGER.info(f"【自动结束】自由注册群组推送已发送")
-                    
-                    # 发送私信通知给管理员（仿照定时注册的逻辑）
-                    remaining_seats = _open.all_user - current_users if _open.all_user != 999999 else "无限制"
-                    admin_text = f'🆓** 自由注册结束**：\n\n🍉 目前席位：{current_users}\n🥝 新增席位：1\n🍋 剩余席位：{remaining_seats}'
-                    try:
-                        from bot import bot, owner
-                        from bot.func_helper.msg_utils import deleteMessage
-                        admin_msg = await bot.send_message(owner, admin_text)
-                        await deleteMessage(admin_msg, 30)
-                        LOGGER.info(f"【自动结束】自由注册管理员私信已发送")
-                    except Exception as e:
-                        LOGGER.error(f"发送管理员私信通知失败: {e}")
-                    
-                elif _open.stat and _open.timing > 0:  # 定时注册
-                    LOGGER.info(f"【自动结束】关闭定时注册，当前用户数：{current_users}")
-                    _open.timing = 0
-                    _open.stat = False
-                    save_config()
-                    # 发送定时注册结束推送到群组
-                    await send_register_end_message("timing", current_users, current_users - 1)
-                    LOGGER.info(f"【自动结束】定时注册群组推送已发送")
-                    # 注意：定时注册的管理员私信通知由admin_panel.py的change_for_timing函数处理
+            # 后台异步处理额外检查（不阻塞用户体验）
+            asyncio.create_task(_handle_post_registration_tasks(user_id, _open, save_config))
             
             # 格式化到期时间显示
             if schedall.check_ex:
@@ -254,7 +342,7 @@ async def create_user_internal(_, call, us, stats, deduct_coins=False, coin_cost
             else:
                 ex_display = '__无需保号，放心食用__'
             
-            # 发送成功消息
+            # 立即发送成功消息，提升用户体验
             success_text = f'**▎创建用户成功🎉**\n\n' \
                           f'· 用户名称 | `{emby_name}`\n' \
                           f'· 用户密码 | `{pwd}`\n' \
