@@ -194,7 +194,7 @@ async def create_user_internal(_, call, us, stats, deduct_coins=False, coin_cost
             except Exception as e:
                 LOGGER.error(f"【监控异常】超额检查失败: {str(e)}")
             
-            if current_users >= _open.all_user:
+            if _open.all_user != 999999 and current_users >= _open.all_user:
                 if _open.coin_register:
                     _open.coin_register = False
                     save_config()
@@ -327,8 +327,9 @@ async def create(_, call):
     if _open.coin_register:
         # 检查人数限制
         tg, current_users, white = sql_count_emby()
-        if current_users >= _open.all_user:
-            await callAnswer(call, f'🚫 {sakura_b}注册已满员，当前 {current_users}/{_open.all_user}', True)
+        if _open.all_user != 999999 and current_users >= _open.all_user:
+            all_user_display = "不限制" if _open.all_user == 999999 else str(_open.all_user)
+            await callAnswer(call, f'🚫 {sakura_b}注册已满员，当前 {current_users}/{all_user_display}', True)
         elif int(e.iv) < _open.coin_cost:
             await callAnswer(call, f'🪙 {sakura_b}注册需要 {_open.coin_cost} 个{sakura_b}，您当前只有 {e.iv} 个{sakura_b}。', True)
         else:

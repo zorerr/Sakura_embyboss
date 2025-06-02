@@ -73,7 +73,7 @@ async def register_with_concurrency_control(user_id, user_name, func, *args, **k
     
     # 第一次人数检查：在加入队列前
     tg, current_count, white = sql_count_emby()
-    if current_count >= _open.all_user:
+    if _open.all_user != 999999 and current_count >= _open.all_user:
         try:
             await bot.send_message(user_id, f"🚫 很抱歉，注册已满员\n\n当前用户数：{current_count}/{_open.all_user}")
         except Exception:
@@ -114,7 +114,7 @@ async def register_with_concurrency_control(user_id, user_name, func, *args, **k
             try:
                 # 第二次人数检查：在开始注册前（获取信号量后）
                 tg, current_count_final, white = sql_count_emby()
-                if current_count_final >= _open.all_user:
+                if _open.all_user != 999999 and current_count_final >= _open.all_user:
                     try:
                         await bot.send_message(user_id, f"🚫 注册期间已达人数限制\n\n当前用户数：{current_count_final}/{_open.all_user}\n\n您的注册已取消")
                     except Exception:

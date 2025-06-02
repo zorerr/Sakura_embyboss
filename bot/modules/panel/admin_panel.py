@@ -25,12 +25,13 @@ async def gm_ikb(_, call):
     stat = "True" if stat else "False"
     timing = 'Turn off' if timing == 0 else str(timing) + ' min'
     coin_register = "True" if _open.coin_register else "False"
+    all_user_display = "不限制" if all_user == 999999 else str(all_user)
     tg, emby, white = sql_count_emby()
     gm_text = f'⚙️ 欢迎您，亲爱的管理员 {call.from_user.first_name}\n\n' \
               f'· ®️ 注册状态 | **{stat}**\n' \
               f'· ⏳ 定时注册 | **{timing}**\n' \
               f'· 💰 {sakura_b}注册 | **{coin_register}**\n' \
-              f'· 🎫 总注册限制 | **{all_user}**\n'\
+              f'· 🎫 总注册限制 | **{all_user_display}**\n'\
               f'· 🎟️ 已注册人数 | **{emby}** • WL **{white}**\n' \
               f'· 🤖 bot使用人数 | {tg}'
 
@@ -43,12 +44,13 @@ async def open_menu(_, call):
     await callAnswer(call, '®️ register面板')
     # [开关，注册总数，定时注册] 此间只对emby表中tg用户进行统计
     stat, all_user, tem, timing = await open_check()
+    all_user_display = "不限制" if all_user == 999999 else str(all_user)
     tg, emby, white = sql_count_emby()
     openstats = '✅' if stat else '❎'  # 三元运算
     timingstats = '❎' if timing == 0 else '✅'
     coinstats = '✅' if _open.coin_register else '❎'
     text = f'⚙ **注册状态设置**：\n\n- 自由注册即定量方式，定时注册既定时又定量，将自动转发消息至群组，再次点击按钮可提前结束并报告。\n' \
-           f'- **注册总人数限制 {all_user}**'
+           f'- **注册总人数限制 {all_user_display}**'
     await editMessage(call, text, buttons=open_menu_ikb(openstats, timingstats, coinstats))
     if tem != emby:
         _open.tem = emby
@@ -70,9 +72,10 @@ async def open_stats(_, call):
         _open.stat = False
         save_config()
         await callAnswer(call, "🟢【自由注册】\n\n已结束", True)
-        sur = all_user - tem
+        all_user_display = "不限制" if all_user == 999999 else str(all_user)
+        sur = all_user - tem if all_user != 999999 else "无限制"
         text = f'🫧 管理员 {call.from_user.first_name} 已关闭 **自由注册**\n\n' \
-               f'🎫 总注册限制 | {all_user}\n🎟️ 已注册人数 | {tem}\n' \
+               f'🎫 总注册限制 | {all_user_display}\n🎟️ 已注册人数 | {tem}\n' \
                f'🎭 剩余可注册 | **{sur}**\n🤖 bot使用人数 | {tg}'
         await asyncio.gather(sendPhoto(call, photo=bot_photo, caption=text, send=True),
                              editMessage(call, text, buttons=back_free_ikb))
@@ -86,6 +89,7 @@ async def open_stats(_, call):
                           f"🎟️ 当前已注册人数：{current_users}\n\n"
                           f"- 请在 120s 内发送开注人数\n"
                           f"- 形如：`50` 即开放50个注册名额\n"
+                          f"- 输入 `0` 表示不限制人数\n"
                           f"- 总人数限制将设为：{current_users} + 开注人数\n"
                           f"- 如需要关闭自由注册，再次点击【自由注册】\n"
                           f"- 退出 /cancel")
@@ -100,26 +104,38 @@ async def open_stats(_, call):
 
         try:
             open_count = int(txt.text)
-            if open_count <= 0:
-                raise ValueError("开注人数必须大于0")
-            _open.all_user = current_users + open_count
+            if open_count < 0:
+                raise ValueError("开注人数不能为负数")
+            
+            # 0表示不限制人数
+            if open_count == 0:
+                _open.all_user = 999999
+                open_count_display = "不限制"
+            else:
+                _open.all_user = current_users + open_count
+                open_count_display = str(open_count)
+            
             _open.stat = True
             save_config()
         except ValueError:
-            await editMessage(call, "🚫 请检查数字填写是否正确。\n开注人数必须是大于0的整数", buttons=back_free_register_ikb)
+            await editMessage(call, "🚫 请检查数字填写是否正确。\n开注人数必须是非负整数（0表示不限制人数）", buttons=back_free_register_ikb)
         else:
             tg, current_users, white = sql_count_emby()
-            sur = _open.all_user - current_users
+            sur = _open.all_user - current_users if _open.all_user != 999999 else "无限制"
+            total_limit_display = "不限制" if _open.all_user == 999999 else str(_open.all_user)
+            
             await asyncio.gather(sendPhoto(call, photo=bot_photo,
                                            caption=f'🫧 管理员 {call.from_user.first_name} 已开启 **自由注册**\n\n'
-                                                   f'🎫 总注册限制 | {_open.all_user}\n🎟️ 已注册人数 | {current_users}\n'
+                                                   f'🎫 总注册限制 | {total_limit_display}\n🎟️ 已注册人数 | {current_users}\n'
                                                    f'🎭 剩余可注册 | **{sur}**\n🤖 bot使用人数 | {tg}',
                                            buttons=gog_rester_ikb(), send=True),
                                  editMessage(call,
-                                             f"®️ 好，已设置**自由注册开放 {open_count} 个名额**\n"
-                                             f"总限额：{_open.all_user}（当前{current_users} + 开放{open_count}）",
+                                             f"®️ 好，已设置**自由注册开放 {open_count_display} 个名额**\n"
+                                             f"总限额：{total_limit_display}（当前{current_users} + 开放{open_count_display}）",
                                              buttons=back_free_ikb))
-            LOGGER.info(f"【admin】：管理员 {call.from_user.first_name} 开启了自由注册，开放 {open_count} 个名额，总人数限制 {_open.all_user}")
+            
+            open_count_log = "不限制" if open_count == 0 else str(open_count)
+            LOGGER.info(f"【admin】：管理员 {call.from_user.first_name} 开启了自由注册，开放 {open_count_log} 个名额，总人数限制 {total_limit_display}")
 
 
 change_for_timing_task = None
@@ -144,6 +160,7 @@ async def open_timing(_, call):
                           f"- 请在 120s 内发送 [定时时长] [开注人数]\n"
                           f"- 形如：`30 50` 即30min，开放50个注册名额\n"
                           f"- 总人数限制将设为：{current_users} + 开注人数\n"
+                          f"- 开注人数为 0 表示不限制人数\n"
                           f"- 如需要关闭定时注册，再次点击【定时注册】\n"
                           f"- 设置好之后将发送置顶消息注意权限\n- 退出 /cancel")
 
@@ -159,29 +176,42 @@ async def open_timing(_, call):
             new_timing, open_count = txt.text.split()
             new_timing = int(new_timing)
             open_count = int(open_count)
-            if new_timing <= 0 or open_count <= 0:
-                raise ValueError("时长和开注人数必须大于0")
+            if new_timing <= 0 or open_count < 0:
+                raise ValueError("时长必须大于0，开注人数不能为负数")
+            
             _open.timing = new_timing
-            _open.all_user = current_users + open_count
+            
+            # 0表示不限制人数
+            if open_count == 0:
+                _open.all_user = 999999
+                open_count_display = "不限制"
+            else:
+                _open.all_user = current_users + open_count
+                open_count_display = str(open_count)
+            
             _open.stat = True
             save_config()
         except ValueError:
-            await editMessage(call, "🚫 请检查数字填写是否正确。\n`[时长min] [开注人数]`\n时长和开注人数必须是大于0的整数", buttons=back_open_menu_ikb)
+            await editMessage(call, "🚫 请检查数字填写是否正确。\n`[时长min] [开注人数]`\n时长必须大于0，开注人数必须是非负整数（0表示不限制人数）", buttons=back_open_menu_ikb)
         else:
             tg, current_users, white = sql_count_emby()
-            sur = _open.all_user - current_users
+            sur = _open.all_user - current_users if _open.all_user != 999999 else "无限制"
+            total_limit_display = "不限制" if _open.all_user == 999999 else str(_open.all_user)
+            
             await asyncio.gather(sendPhoto(call, photo=bot_photo,
                                            caption=f'🫧 管理员 {call.from_user.first_name} 已开启 **定时注册**\n\n'
                                                    f'⏳ 可持续时间 | **{_open.timing}** min\n'
-                                                   f'🎫 总注册限制 | {_open.all_user}\n🎟️ 已注册人数 | {current_users}\n'
+                                                   f'🎫 总注册限制 | {total_limit_display}\n🎟️ 已注册人数 | {current_users}\n'
                                                    f'🎭 剩余可注册 | **{sur}**\n🤖 bot使用人数 | {tg}',
                                            buttons=gog_rester_ikb(), send=True),
                                  editMessage(call,
-                                             f"®️ 好，已设置**定时注册 {_open.timing} min 开放 {open_count} 个名额**\n"
-                                             f"总限额：{_open.all_user}（当前{current_users} + 开放{open_count}）",
+                                             f"®️ 好，已设置**定时注册 {_open.timing} min 开放 {open_count_display} 个名额**\n"
+                                             f"总限额：{total_limit_display}（当前{current_users} + 开放{open_count_display}）",
                                              buttons=back_free_ikb))
+            
+            open_count_log = "不限制" if open_count == 0 else str(open_count)
             LOGGER.info(
-                f"【admin】-定时注册：管理员 {call.from_user.first_name} 开启了定时注册 {_open.timing} min，开放 {open_count} 个名额，总人数限制 {_open.all_user}")
+                f"【admin】-定时注册：管理员 {call.from_user.first_name} 开启了定时注册 {_open.timing} min，开放 {open_count_log} 个名额，总人数限制 {total_limit_display}")
             # 创建一个异步任务并保存为变量，并给它一个名字
             change_for_timing_task = asyncio.create_task(
                 change_for_timing(_open.timing, call.from_user.id, call), name='change_for_timing')
@@ -204,9 +234,10 @@ async def open_timing(_, call):
             save_config()
             
             tg, current_users, white = sql_count_emby()
-            sur = _open.all_user - current_users if current_users < _open.all_user else 0
+            all_user_display = "不限制" if _open.all_user == 999999 else str(_open.all_user)
+            sur = _open.all_user - current_users if _open.all_user != 999999 else "无限制"
             text = f'🫧 管理员 {call.from_user.first_name} 已关闭 **定时注册**\n\n' \
-                   f'⏳ 原定时长 | {original_timing} min（已终止）\n🎫 总注册限制 | {_open.all_user}\n🎟️ 已注册人数 | {current_users}\n' \
+                   f'⏳ 原定时长 | {original_timing} min（已终止）\n🎫 总注册限制 | {all_user_display}\n🎟️ 已注册人数 | {current_users}\n' \
                    f'🎭 剩余可注册 | **{sur}**\n🤖 bot使用人数 | {tg}'
             await sendPhoto(call, photo=bot_photo, caption=text, send=True)
             
@@ -230,7 +261,7 @@ async def change_for_timing(timing, tgid, call):
             _open.stat = False
             save_config()
             b = _open.tem - a
-            s = _open.all_user - _open.tem
+            s = _open.all_user - _open.tem if _open.all_user != 999999 else "无限制"
             
             # 使用统一的推送函数发送定时注册结束消息，传入开始用户数
             await send_register_end_message("timing", _open.tem, a)
@@ -257,9 +288,10 @@ async def open_coin_register(_, call):
         _open.coin_register = False
         save_config()
         await callAnswer(call, f"🟢【{sakura_b}注册】\n\n已结束", True)
-        sur = _open.all_user - current_users
+        all_user_display = "不限制" if _open.all_user == 999999 else str(_open.all_user)
+        sur = _open.all_user - current_users if _open.all_user != 999999 else "无限制"
         text = f'🫧 管理员 {call.from_user.first_name} 已关闭 **{sakura_b}注册**\n\n' \
-               f'💰 所需{sakura_b} | {_open.coin_cost}\n🎫 总注册限制 | {_open.all_user}\n🎟️ 已注册人数 | {current_users}\n' \
+               f'💰 所需{sakura_b} | {_open.coin_cost}\n🎫 总注册限制 | {all_user_display}\n🎟️ 已注册人数 | {current_users}\n' \
                f'🎭 剩余可注册 | **{sur}**\n🤖 bot使用人数 | {tg}'
         await asyncio.gather(sendPhoto(call, photo=bot_photo, caption=text, send=True),
                              editMessage(call, text, buttons=back_free_ikb))
@@ -272,6 +304,7 @@ async def open_coin_register(_, call):
                           f"- 请在 120s 内发送 [所需{sakura_b}数量] [开注人数]\n"
                           f"- 形如：`100 50` 即需要100个{sakura_b}，开放50个注册名额\n"
                           f"- 总人数限制将设为：{current_users} + 开注人数\n"
+                          f"- 开注人数为 0 表示不限制人数\n"
                           f"- 用户必须拥有足够的{sakura_b}才能注册\n"
                           f"- 如需要关闭{sakura_b}注册，再次点击【{sakura_b}注册】\n"
                           f"- 退出 /cancel")
@@ -288,27 +321,40 @@ async def open_coin_register(_, call):
             coin_cost, open_count = txt.text.split()
             coin_cost = int(coin_cost)
             open_count = int(open_count)
-            if coin_cost <= 0 or open_count <= 0:
-                raise ValueError(f"所需{sakura_b}数量和开注人数必须大于0")
+            if coin_cost <= 0 or open_count < 0:
+                raise ValueError(f"所需{sakura_b}数量必须大于0，开注人数不能为负数")
+            
             _open.coin_cost = coin_cost
-            _open.all_user = current_users + open_count
+            
+            # 0表示不限制人数
+            if open_count == 0:
+                _open.all_user = 999999
+                open_count_display = "不限制"
+            else:
+                _open.all_user = current_users + open_count
+                open_count_display = str(open_count)
+            
             _open.coin_register = True
             save_config()
         except ValueError:
-            await editMessage(call, f"🚫 请检查数字填写是否正确。\n`[所需{sakura_b}数量] [开注人数]`\n所需{sakura_b}数量和开注人数必须是大于0的整数", buttons=back_coin_register_ikb)
+            await editMessage(call, f"🚫 请检查数字填写是否正确。\n`[所需{sakura_b}数量] [开注人数]`\n所需{sakura_b}数量必须大于0，开注人数必须是非负整数（0表示不限制人数）", buttons=back_coin_register_ikb)
         else:
             tg, current_users, white = sql_count_emby()
-            sur = _open.all_user - current_users
+            sur = _open.all_user - current_users if _open.all_user != 999999 else "无限制"
+            total_limit_display = "不限制" if _open.all_user == 999999 else str(_open.all_user)
+            
             await asyncio.gather(sendPhoto(call, photo=bot_photo,
                                            caption=f'🫧 管理员 {call.from_user.first_name} 已开启 **{sakura_b}注册**\n\n'
-                                                   f'💰 所需{sakura_b} | {_open.coin_cost}\n🎫 总注册限制 | {_open.all_user}\n🎟️ 已注册人数 | {current_users}\n'
+                                                   f'💰 所需{sakura_b} | {_open.coin_cost}\n🎫 总注册限制 | {total_limit_display}\n🎟️ 已注册人数 | {current_users}\n'
                                                    f'🎭 剩余可注册 | **{sur}**\n🤖 bot使用人数 | {tg}',
                                            buttons=gog_rester_ikb(), send=True),
                                  editMessage(call,
-                                             f"®️ 好，已设置**{sakura_b}注册需要 {coin_cost} 个{sakura_b}，开放 {open_count} 个名额**\n"
-                                             f"总限额：{_open.all_user}（当前{current_users} + 开放{open_count}）",
+                                             f"®️ 好，已设置**{sakura_b}注册需要 {coin_cost} 个{sakura_b}，开放 {open_count_display} 个名额**\n"
+                                             f"总限额：{total_limit_display}（当前{current_users} + 开放{open_count_display}）",
                                              buttons=back_free_ikb))
-            LOGGER.info(f"【admin】：管理员 {call.from_user.first_name} 开启了{sakura_b}注册，需要 {coin_cost} 个{sakura_b}，开放 {open_count} 个名额，总人数限制 {_open.all_user}")
+            
+            open_count_log = "不限制" if open_count == 0 else str(open_count)
+            LOGGER.info(f"【admin】：管理员 {call.from_user.first_name} 开启了{sakura_b}注册，需要 {coin_cost} 个{sakura_b}，开放 {open_count_log} 个名额，总人数限制 {total_limit_display}")
 
 
 @bot.on_callback_query(filters.regex('open_us') & admins_on_filter)
