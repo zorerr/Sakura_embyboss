@@ -41,7 +41,7 @@ LOGIN_REMINDER = (
 async def create_user(_, call, us, stats):
     msg = await ask_return(call,
                            text='🤖**注意：您已进入注册状态:\n\n• 请在2min内输入 `[用户名][空格][安全码]`\n• 举个例子🌰：`苏苏 1234`**\n\n• 用户名中不限制中/英文/emoji，🚫**特殊字符**'
-                                '\n• 安全码为敏感操作时附加验证，请填入最熟悉的数字4~6位；退出请点 /cancel', timer=120,
+                                '\n• 安全码为敏感操作时附加验证，请填入至少4位字符（数字/字母/符号均可）；退出请点 /cancel', timer=120,
                            button=close_it_ikb)
     if not msg:
         return
@@ -51,8 +51,16 @@ async def create_user(_, call, us, stats):
 
     try:
         emby_name, emby_pwd2 = msg.text.split()
+        
+        # 验证安全码格式：必须至少4位字符
+        if len(emby_pwd2) < 4:
+            await msg.reply(f'⚠️ 安全码格式错误\n\n安全码必须至少4位字符，您输入的是：`{emby_pwd2}`（{len(emby_pwd2)}位）\n\n**请重新注册！**', reply_markup=re_create_ikb)
+            return
+            
     except (IndexError, ValueError):
         await msg.reply(f'⚠️ 输入格式错误\n\n`{msg.text}`\n **会话已结束！**')
+        return
+
     else:
         # 获取创建前的用户数，用于计算新增
         from bot.sql_helper.sql_emby import sql_count_emby
@@ -174,7 +182,7 @@ async def create(_, call):
                 sql_update_emby(Emby.tg == call.from_user.id, iv=new_iv)
                 await create_user(_, call, us=_open.open_us, stats=True)
     elif not _open.stat and int(e.us) <= 0:
-        await callAnswer(call, f'🤖 自助注册已关闭，等待开启或使用注册码注册。', True)
+        await callAnswer(call, f'🤖 自助注册已关闭，等待开启或使用注册码注册。\n\n💡 注册格式：`[用户名] [安全码]`\n如：`苏苏 1234`（安全码需至少4位）', True)
     elif not _open.stat and int(e.us) > 0:
         send = await callAnswer(call, f'🪙 资质核验成功，请稍后。', True)
         if send is False:
