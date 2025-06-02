@@ -66,6 +66,8 @@ api = config.api
 save_config()
 
 LOGGER.info("配置文件加载完毕")
+# Debug级别日志测试（仅在debug_log=true时显示）
+LOGGER.debug(f"Debug日志已启用，当前debug_log配置: {config.debug_log}")
 from pyrogram.types import BotCommand
 
 '''定义不同等级的人使用不同命令'''

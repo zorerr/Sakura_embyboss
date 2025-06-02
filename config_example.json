@@ -61,6 +61,7 @@
     "invite_cost": 1000
   },
   "keep_alive_days": 21,
+  "debug_log": false,
   "tz_ad": "",
   "tz_api": "",
   "tz_id": [],

@@ -191,6 +191,8 @@ class Config(BaseModel):
     client_filter_block_user: bool = False
     # 保号天数
     keep_alive_days: int = 21
+    # 日志debug级别控制
+    debug_log: bool = False
     moviepilot: MP = Field(default_factory=MP)
     auto_update: AutoUpdate = Field(default_factory=AutoUpdate)
     red_envelope: RedEnvelope = Field(default_factory=RedEnvelope)
