@@ -14,11 +14,12 @@ from pyrogram import filters
 from pyrogram.types import ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import func
 
-from bot import bot, prefixes, sakura_b, bot_photo, red_envelope
+from bot import bot, prefixes, sakura_b, bot_photo, red_envelope, LOGGER
 from bot.func_helper.filters import user_in_group_on_filter
 from bot.func_helper.fix_bottons import users_iv_button
 from bot.func_helper.msg_utils import sendPhoto, sendMessage, callAnswer, editMessage
 from bot.func_helper.utils import pwd_create, judge_admins, get_users, cache
+from bot.func_helper.scheduler import scheduler
 from bot.sql_helper import Session
 from bot.sql_helper.sql_emby import Emby, sql_get_emby, sql_update_emby
 from bot.ranks_helper.ranks_draw import RanksDraw
@@ -27,6 +28,15 @@ from bot.schemas import Yulv
 # 小项目，说实话不想写数据库里面。放内存里了，从字典里面每次拿分
 
 red_envelopes = {}
+
+# 红包锁字典，用于并发控制
+red_envelope_locks = {}
+
+# 全局锁，用于保护锁字典的创建操作
+_lock_creation_lock = asyncio.Lock()
+
+# 红包过期时间（小时）
+RED_ENVELOPE_EXPIRE_HOURS = 24
 
 
 class RedEnvelope:
@@ -42,6 +52,7 @@ class RedEnvelope:
         self.receivers = {}  # {user_id: {"amount": xx, "name": "xx"}}
         self.target_user = None  # 专享红包接收者ID
         self.message = None  # 专享红包消息
+        self.created_time = datetime.now()  # 创建时间
 
 
 async def create_reds(
@@ -187,104 +198,180 @@ async def send_red_envelope(_, msg):
 @bot.on_callback_query(filters.regex("red_envelope") & user_in_group_on_filter)
 async def grab_red_envelope(_, call):
     red_id = call.data.split("-")[1]
-    try:
-        envelope = red_envelopes[red_id]
-    except (IndexError, KeyError):
+    
+    # 先检查红包是否存在，避免为不存在的红包创建锁
+    if red_id not in red_envelopes:
         return await callAnswer(
             call, "/(ㄒoㄒ)/~~ \n\n来晚了，红包已经被抢光啦。", True
         )
-
-    # 验证用户资格
-    e = sql_get_emby(tg=call.from_user.id)
-    if not e:
-        return await callAnswer(call, "你还未私聊bot! 数据库没有你.", True)
-
-    # 检查是否已领取
-    if call.from_user.id in envelope.receivers:
-        return await callAnswer(call, "ʕ•̫͡•ʔ 你已经领取过红包了。不许贪吃", True)
-
-    # 检查红包是否已抢完
-    if envelope.members > 0:
-        # 正数份数：检查剩余份数
-        if envelope.rest_members <= 0:
-            return await callAnswer(
-                call, "/(ㄒoㄒ)/~~ \n\n来晚了，红包已经被抢光啦。", True
-            )
-    else:
-        # 负数份数（管理员特权）：检查已领取次数是否达到绝对值
-        if len(envelope.receivers) >= abs(envelope.members):
-            return await callAnswer(
-                call, "/(ㄒoㄒ)/~~ \n\n来晚了，红包已经被抢光啦。", True
-            )
-
-    amount = 0
-    # 处理均分红包
-    if envelope.type == "equal":
-        amount = envelope.money // envelope.members
-
-    # 处理专享红包
-    elif envelope.type == "private":
-        if call.from_user.id != envelope.target_user:
-            return await callAnswer(call, "ʕ•̫͡•ʔ 这是你的专属红包吗？", True)
-        amount = envelope.rest_money
-
-    # 处理拼手气红包
-    else:
-        if envelope.members > 0:
-            # 正数份数的拼手气红包
-            if envelope.rest_members > 1:
-                k = 2 * envelope.rest_money / envelope.rest_members
-                amount = int(random.uniform(1, k))
-            else:
-                amount = envelope.rest_money
-        else:
-            # 负数份数的拼手气红包（管理员特权）
-            remaining_count = abs(envelope.members) - len(envelope.receivers)
-            if remaining_count > 1:
-                k = 2 * envelope.rest_money / remaining_count
-                amount = int(random.uniform(1, k))
-            else:
-                amount = envelope.rest_money
-
-    # 更新用户余额
-    new_balance = e.iv + amount
-    sql_update_emby(Emby.tg == call.from_user.id, iv=new_balance)
-
-    # 更新红包信息
-    envelope.receivers[call.from_user.id] = {
-        "amount": amount,
-        "name": call.from_user.first_name or "Anonymous",
-    }
-    envelope.rest_money -= amount
-    envelope.rest_members -= 1
-
-    # 专享红包特殊提示
-    if envelope.type == "private":
-        await callAnswer(
-            call,
-            f"🧧恭喜，你领取到了\n{envelope.sender_name} の {amount}{sakura_b}\n\n{envelope.message}",
-            True,
-        )
-    else:
-        await callAnswer(
-            call, f"🧧恭喜，你领取到了\n{envelope.sender_name} の {amount}{sakura_b}", True
-        )
-
-    # 处理红包抢完后的展示
-    # 判断红包是否已完成：正数份数看rest_members，负数份数看已领取次数
-    is_finished = (envelope.members > 0 and envelope.rest_members == 0) or \
-                  (envelope.members < 0 and len(envelope.receivers) >= abs(envelope.members))
     
-    if is_finished:
-        red_envelopes.pop(red_id)
-        text = await generate_final_message(envelope)
-        n = 2048
-        chunks = [text[i : i + n] for i in range(0, len(text), n)]
-        for i, chunk in enumerate(chunks):
-            if i == 0:
-                await editMessage(call, chunk)
+    # 安全地获取或创建红包锁
+    async with _lock_creation_lock:
+        if red_id not in red_envelope_locks:
+            red_envelope_locks[red_id] = asyncio.Lock()
+        envelope_lock = red_envelope_locks[red_id]
+    
+    # 使用红包专用锁保护整个领取过程
+    async with envelope_lock:
+        # 在锁内再次检查红包是否存在（可能在等锁期间被删除）
+        try:
+            envelope = red_envelopes[red_id]
+        except (IndexError, KeyError):
+            return await callAnswer(
+                call, "/(ㄒoㄒ)/~~ \n\n来晚了，红包已经被抢光啦。", True
+            )
+
+        # 检查红包是否过期
+        if is_envelope_expired(envelope):
+            # 处理过期红包
+            if red_id in red_envelopes:  # 再次检查红包是否还存在
+                await handle_expired_envelope(red_id, envelope)
+                # 清理锁
+                red_envelope_locks.pop(red_id, None)
+            return await callAnswer(
+                call, f"/(ㄒoㄒ)/~~ \n\n红包已过期({RED_ENVELOPE_EXPIRE_HOURS}小时)，剩余金额已退还给发送者。", True
+            )
+
+        # 验证用户资格
+        e = sql_get_emby(tg=call.from_user.id)
+        if not e:
+            return await callAnswer(call, "你还未私聊bot! 数据库没有你.", True)
+
+        # 检查是否已领取（在锁内再次检查）
+        if call.from_user.id in envelope.receivers:
+            return await callAnswer(call, "ʕ•̫͡•ʔ 你已经领取过红包了。不许贪吃", True)
+
+        # 检查红包是否已抢完（在锁内再次检查）
+        if envelope.members > 0:
+            # 正数份数：检查剩余份数
+            if envelope.rest_members <= 0:
+                return await callAnswer(
+                    call, "/(ㄒoㄒ)/~~ \n\n来晚了，红包已经被抢光啦。", True
+                )
+        else:
+            # 负数份数（管理员特权）：检查已领取次数是否达到绝对值
+            if len(envelope.receivers) >= abs(envelope.members):
+                return await callAnswer(
+                    call, "/(ㄒoㄒ)/~~ \n\n来晚了，红包已经被抢光啦。", True
+                )
+
+        # 在锁保护下计算领取金额
+        amount = 0
+        # 处理均分红包
+        if envelope.type == "equal":
+            # 均分红包：需要考虑负数金额的情况
+            abs_money = abs(envelope.money)
+            abs_members = abs(envelope.members)
+            base_amount = abs_money // abs_members
+            remainder = abs_money % abs_members
+            current_receivers = len(envelope.receivers)
+            
+            if envelope.money >= 0:
+                # 正数金额：前remainder个人多分1元
+                amount = base_amount + (1 if current_receivers < remainder else 0)
             else:
-                await call.message.reply(chunk)
+                # 负数金额：按负数分配，前remainder个人多扣1元
+                amount = -(base_amount + (1 if current_receivers < remainder else 0))
+
+        # 处理专享红包
+        elif envelope.type == "private":
+            if call.from_user.id != envelope.target_user:
+                return await callAnswer(call, "ʕ•̫͡•ʔ 这是你的专属红包吗？", True)
+            amount = envelope.rest_money
+
+        # 处理拼手气红包
+        else:
+            if envelope.members > 0:
+                # 正数份数的拼手气红包
+                if envelope.rest_members > 1 and envelope.rest_money > 1:
+                    # 确保至少给最后一个人留1元
+                    max_amount = envelope.rest_money - (envelope.rest_members - 1)
+                    if max_amount >= 1:
+                        k = 2 * envelope.rest_money / envelope.rest_members
+                        amount = int(random.uniform(1, min(k, max_amount, envelope.rest_money)))
+                        amount = max(1, amount)  # 确保至少1元
+                    else:
+                        amount = 1  # 最小保证1元
+                else:
+                    amount = envelope.rest_money
+            else:
+                # 负数份数的拼手气红包（管理员特权）
+                remaining_count = abs(envelope.members) - len(envelope.receivers)
+                if remaining_count > 1 and envelope.rest_money > 1:
+                    # 负数红包的特殊处理：确保每个人都能拿到钱
+                    max_amount = envelope.rest_money - (remaining_count - 1)
+                    if max_amount >= 1:
+                        k = 2 * envelope.rest_money / remaining_count
+                        amount = int(random.uniform(1, min(k, max_amount, envelope.rest_money)))
+                        amount = max(1, amount)  # 确保至少1元
+                    else:
+                        amount = 1  # 最小保证1元
+                else:
+                    amount = envelope.rest_money
+
+        # 边界安全：确保领取金额合法
+        amount = max(0, min(amount, envelope.rest_money))
+        
+        # 防止出现0元红包（除非剩余金额确实为0）
+        if envelope.rest_money > 0 and amount == 0:
+            amount = 1
+
+        # 记录并发安全日志
+        LOGGER.info(f"【红包领取】用户{call.from_user.id}领取红包{red_id}，金额:{amount}，剩余:{envelope.rest_money}")
+
+        # 数据库事务保护：先更新用户余额，成功后再更新红包状态
+        try:
+            new_balance = e.iv + amount
+            sql_update_emby(Emby.tg == call.from_user.id, iv=new_balance)
+            
+            # 数据库操作成功后，更新红包状态
+            envelope.receivers[call.from_user.id] = {
+                "amount": amount,
+                "name": call.from_user.first_name or "Anonymous",
+            }
+            envelope.rest_money -= amount
+            
+            # 对于正数份数才更新rest_members，负数份数不需要
+            if envelope.members > 0:
+                envelope.rest_members -= 1
+                
+            LOGGER.info(f"【红包领取成功】用户{call.from_user.id}成功领取{amount}{sakura_b}，新余额:{new_balance}")
+            
+        except Exception as db_error:
+            LOGGER.error(f"【红包领取失败】数据库更新失败:{db_error}，用户:{call.from_user.id}")
+            return await callAnswer(call, "❌ 系统繁忙，请稍后再试", True)
+
+        # 专享红包特殊提示
+        if envelope.type == "private":
+            await callAnswer(
+                call,
+                f"🧧恭喜，你领取到了\n{envelope.sender_name} の {amount}{sakura_b}\n\n{envelope.message}",
+                True,
+            )
+        else:
+            await callAnswer(
+                call, f"🧧恭喜，你领取到了\n{envelope.sender_name} の {amount}{sakura_b}", True
+            )
+
+        # 处理红包抢完后的展示
+        # 判断红包是否已完成：正数份数看rest_members，负数份数看已领取次数
+        is_finished = (envelope.members > 0 and envelope.rest_members == 0) or \
+                      (envelope.members < 0 and len(envelope.receivers) >= abs(envelope.members))
+        
+        if is_finished:
+            red_envelopes.pop(red_id)
+            # 清理锁
+            red_envelope_locks.pop(red_id, None)
+            LOGGER.info(f"【红包完成】红包{red_id}已被领完，总共{len(envelope.receivers)}人领取")
+            
+            text = await generate_final_message(envelope)
+            n = 2048
+            chunks = [text[i : i + n] for i in range(0, len(text), n)]
+            for i, chunk in enumerate(chunks):
+                if i == 0:
+                    await editMessage(call, chunk)
+                else:
+                    await call.message.reply(chunk)
 
 
 async def verify_red_envelope_sender(msg, money, is_private=False, members=None):
@@ -561,3 +648,121 @@ async def users_iv_pikb(_, call):
     button = await users_iv_button(b, j, tg)
     text = a[j - 1]
     await editMessage(call, f"**▎🏆 {sakura_b}风云录**\n\n{text}", buttons=button)
+
+
+def is_envelope_expired(envelope):
+    """检查红包是否过期"""
+    expire_time = envelope.created_time + timedelta(hours=RED_ENVELOPE_EXPIRE_HOURS)
+    return datetime.now() > expire_time
+
+
+async def handle_expired_envelope(envelope_id, envelope):
+    """处理过期红包，退还余额给发送者"""
+    try:
+        LOGGER.info(f"【红包过期处理】开始处理过期红包:{envelope_id}, 剩余金额:{envelope.rest_money}")
+        
+        # 计算需要退还的金额
+        refund_amount = envelope.rest_money
+        
+        if refund_amount > 0 and envelope.sender_id:
+            # 退还金额给发送者
+            e = sql_get_emby(tg=envelope.sender_id)
+            if e:
+                new_balance = e.iv + refund_amount
+                sql_update_emby(Emby.tg == envelope.sender_id, iv=new_balance)
+                LOGGER.info(f"【红包过期退款】退还{refund_amount}{sakura_b}给用户{envelope.sender_id}, 新余额:{new_balance}")
+                
+                # 发送过期通知
+                try:
+                    expire_msg = (
+                        f"🧧 **红包过期通知**\n\n"
+                        f"您的红包已过期，剩余 {refund_amount} {sakura_b} 已自动退还\n"
+                        f"过期时间：{RED_ENVELOPE_EXPIRE_HOURS}小时"
+                    )
+                    await bot.send_message(envelope.sender_id, expire_msg)
+                    LOGGER.info(f"【红包过期通知】已向用户{envelope.sender_id}发送过期通知")
+                except Exception as notify_error:
+                    LOGGER.warning(f"【红包过期通知】发送通知失败:{notify_error}")
+            else:
+                LOGGER.error(f"【红包过期退款】用户{envelope.sender_id}数据不存在，无法退款")
+        else:
+            LOGGER.info(f"【红包过期处理】红包{envelope_id}无需退款，剩余金额:{refund_amount}")
+        
+        # 从红包字典中移除
+        red_envelopes.pop(envelope_id, None)
+        # 清理对应的锁
+        red_envelope_locks.pop(envelope_id, None)
+        LOGGER.info(f"【红包过期处理】红包{envelope_id}处理完成，已从内存中移除")
+        return True
+        
+    except Exception as e:
+        # 发生错误时也要移除红包和锁，避免一直占用内存
+        red_envelopes.pop(envelope_id, None)
+        red_envelope_locks.pop(envelope_id, None)
+        LOGGER.error(f"【红包过期处理】处理红包{envelope_id}时发生错误:{e}，已强制移除")
+        return False
+
+
+async def cleanup_expired_envelopes():
+    """清理过期红包的定时任务"""
+    try:
+        LOGGER.info(f"【红包清理任务】开始执行，当前红包总数:{len(red_envelopes)}")
+        
+        # 查找过期红包 - 先复制字典内容避免迭代时修改
+        expired_ids = []
+        red_envelopes_copy = dict(red_envelopes)  # 创建副本进行安全遍历
+        for envelope_id, envelope in red_envelopes_copy.items():
+            if is_envelope_expired(envelope):
+                expired_ids.append((envelope_id, envelope))
+        
+        LOGGER.info(f"【红包清理任务】发现{len(expired_ids)}个过期红包需要处理")
+        
+        # 串行处理过期红包，避免并发修改字典
+        cleanup_count = 0
+        total_refund = 0
+        for envelope_id, envelope in expired_ids:
+            # 在处理前再次检查红包是否还存在（可能已被领完）
+            if envelope_id not in red_envelopes:
+                continue
+                
+            refund_before = envelope.rest_money
+            success = await handle_expired_envelope(envelope_id, envelope)
+            if success:
+                cleanup_count += 1
+                total_refund += refund_before
+                
+        if cleanup_count > 0:
+            LOGGER.info(f"【红包清理任务】清理完成，处理了{cleanup_count}个过期红包，总退款:{total_refund}{sakura_b}")
+        else:
+            LOGGER.info(f"【红包清理任务】无过期红包需要清理")
+            
+        # 记录当前红包状态统计
+        active_count = len(red_envelopes)
+        if active_count > 0:
+            total_money = sum(env.rest_money for env in red_envelopes.values())
+            LOGGER.info(f"【红包状态统计】当前活跃红包:{active_count}个，剩余总金额:{total_money}{sakura_b}")
+            
+        # 清理孤立的锁（对应的红包已不存在）
+        orphaned_locks = []
+        for lock_id in list(red_envelope_locks.keys()):
+            if lock_id not in red_envelopes:
+                orphaned_locks.append(lock_id)
+        
+        for lock_id in orphaned_locks:
+            red_envelope_locks.pop(lock_id, None)
+            
+        if orphaned_locks:
+            LOGGER.info(f"【锁清理】清理了{len(orphaned_locks)}个孤立的锁")
+            
+    except Exception as e:
+        LOGGER.error(f"【红包清理任务】清理过程发生错误: {e}")
+
+
+# 启动红包过期清理定时任务
+scheduler.add_job(
+    func=cleanup_expired_envelopes,
+    trigger='interval',
+    hours=24,
+    id='cleanup_expired_envelopes',
+    replace_existing=True
+)
