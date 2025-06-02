@@ -16,7 +16,7 @@ from pyrogram import filters
 from pyrogram.types import CallbackQuery
 from bot.func_helper.emby import emby
 from bot.func_helper.filters import user_in_group_on_filter
-from bot.func_helper.utils import members_info, cr_link_one, judge_admins, tem_deluser, pwd_create, send_register_end_message
+from bot.func_helper.utils import members_info, cr_link_one, judge_admins, tem_deluser, pwd_create, send_register_end_message, register_with_concurrency_control
 from bot.func_helper.fix_bottons import members_ikb, back_members_ikb, re_create_ikb, del_me_ikb, re_delme_ikb, \
     re_reset_ikb, re_changetg_ikb, emby_block_ikb, user_emby_block_ikb, user_emby_unblock_ikb, re_exchange_b_ikb, \
     store_ikb, re_bindtg_ikb, close_it_ikb, store_query_page, re_born_ikb, send_changetg_ikb, favorites_page_ikb
@@ -38,91 +38,257 @@ LOGIN_REMINDER = (
 )
 
 # 创号函数
-async def create_user(_, call, us, stats):
-    msg = await ask_return(call,
-                           text='🤖**注意：您已进入注册状态:\n\n• 请在2min内输入 `[用户名][空格][安全码]`\n• 举个例子🌰：`苏苏 1234`**\n\n• 用户名中不限制中/英文/emoji，🚫**特殊字符**'
-                                '\n• 安全码为敏感操作时附加验证，请填入至少4位字符（数字/字母/符号均可）；退出请点 /cancel', timer=120,
-                           button=close_it_ikb)
-    if not msg:
-        return
-
-    elif msg.text == '/cancel':
-        return await asyncio.gather(msg.delete(), bot.delete_messages(msg.from_user.id, msg.id - 1))
-
+async def create_user_internal(_, call, us, stats, deduct_coins=False, coin_cost=0):
+    """
+    内部注册函数 - 不带并发控制
+    :param deduct_coins: 是否需要扣除积分
+    :param coin_cost: 扣除的积分数量
+    """
+    user_id = call.from_user.id
+    user_name = call.from_user.first_name or "未知用户"
+    
+    # 参数验证
+    if deduct_coins and coin_cost <= 0:
+        LOGGER.error(f"【参数错误】用户 {user_id} 积分扣除参数无效: deduct_coins={deduct_coins}, coin_cost={coin_cost}")
+        try:
+            await bot.send_message(user_id, '❌ 参数错误，请重试')
+        except:
+            pass
+        return None
+    
+    # 积分扣除状态标记
+    coins_deducted = False
+    original_iv = None
+    
     try:
-        emby_name, emby_pwd2 = msg.text.split()
-        
-        # 验证安全码格式：必须至少4位字符
-        if len(emby_pwd2) < 4:
-            await msg.reply(f'⚠️ 安全码格式错误\n\n安全码必须至少4位字符，您输入的是：`{emby_pwd2}`（{len(emby_pwd2)}位）\n\n**请重新注册！**', reply_markup=re_create_ikb)
-            return
-            
-    except (IndexError, ValueError):
-        await msg.reply(f'⚠️ 输入格式错误\n\n`{msg.text}`\n **会话已结束！**')
-        return
+        # 获取用户输入的账户名和安全码
+        msg = await ask_return(call,
+                               text='🤖**注意：您已进入注册状态:\n\n• 请在2min内输入 `[用户名][空格][安全码]`\n• 举个例子🌰：`苏苏 1234`**\n\n• 用户名中不限制中/英文/emoji，🚫**特殊字符**'
+                                    '\n• 安全码为敏感操作时附加验证，请填入至少4位字符（数字/字母/符号均可）；退出请点 /cancel', timer=120,
+                               button=close_it_ikb)
+        if not msg:
+            return None
 
-    else:
-        # 获取创建前的用户数，用于计算新增
-        from bot.sql_helper.sql_emby import sql_count_emby
-        from bot.func_helper.utils import send_register_end_message
-        tg, start_users, white = sql_count_emby()
+        elif msg.text == '/cancel':
+            await asyncio.gather(msg.delete(), bot.delete_messages(msg.from_user.id, msg.id - 1))
+            return None
+
+        try:
+            emby_name, emby_pwd2 = msg.text.split()
+            
+            # 验证安全码格式：必须至少4位字符
+            if len(emby_pwd2) < 4:
+                await msg.reply(f'⚠️ 安全码格式错误\n\n安全码必须至少4位字符，您输入的是：`{emby_pwd2}`（{len(emby_pwd2)}位）\n\n**请重新注册！**', reply_markup=re_create_ikb)
+                return None
+                
+        except (IndexError, ValueError):
+            await msg.reply(f'⚠️ 输入格式错误\n\n`{msg.text}`\n **会话已结束！**')
+            return None
         
-        if start_users >= _open.all_user: 
-            return await msg.reply(f'**🚫 很抱歉，注册总数({start_users})已达限制({_open.all_user})。**')
+        # 检查用户是否已有账户
+        d = sql_get_emby(tg=user_id)
+        if not d:
+            try:
+                await bot.send_message(user_id, '⚠️ 数据库错误，请重新开始')
+            except:
+                pass
+            return None
+        
+        if d.embyid:
+            try:
+                await bot.send_message(user_id, '⚠️ 您已经拥有账户')
+            except:
+                pass
+            return None
         
         send = await msg.reply(
             f'🆗 会话结束，收到设置\n\n用户名：**{emby_name}**  安全码：**{emby_pwd2}** \n\n__正在为您初始化账户，更新用户策略__......')
-        # emby api操作
-        data = await emby.emby_create(emby_name, us)
+        
+        # 添加超时控制的emby api操作
+        try:
+            data = await asyncio.wait_for(emby.emby_create(emby_name, us), timeout=60.0)
+        except asyncio.TimeoutError:
+            await editMessage(send,
+                              '**❌ 注册超时，可能是服务器繁忙，请稍后重试**',
+                              re_create_ikb)
+            LOGGER.error("【创建账户】：Emby API调用超时")
+            return None
+        except Exception as e:
+            await editMessage(send,
+                              f'**❌ 创建账户时发生错误：{str(e)}**',
+                              re_create_ikb)
+            LOGGER.error(f"【创建账户】：API调用异常 - {str(e)}")
+            return None
+            
         if not data:
             await editMessage(send,
                               '**- ❎ 已有此账户名，请重新输入注册\n- ❎ 或检查有无特殊字符\n- ❎ 或emby服务器连接不通，会话已结束！**',
                               re_create_ikb)
             LOGGER.error("【创建账户】：重复账户 or 未知错误！")
-        else:
-            tg = call.from_user.id
-            pwd = data[1]
-            eid = data[0]
-            ex = data[2]
-            sql_update_emby(Emby.tg == tg, embyid=eid, name=emby_name, pwd=pwd, pwd2=emby_pwd2, lv='b',
-                            cr=datetime.now(), ex=ex) if stats else sql_update_emby(Emby.tg == tg, embyid=eid,
-                                                                                    name=emby_name, pwd=pwd,
-                                                                                    pwd2=emby_pwd2, lv='b',
-                                                                                    cr=datetime.now(), ex=ex,
-                                                                                    us=0)
-            
+            return None
+        
+        # 解包emby创建结果
+        eid, pwd, ex = data
+        
+        # 创建成功后才扣除积分（如果需要）
+        if deduct_coins and coin_cost > 0:
+            try:
+                current_data = sql_get_emby(tg=user_id)
+                if current_data and current_data.iv >= coin_cost:
+                    original_iv = int(current_data.iv)  # 备份原始积分
+                    new_iv = original_iv - coin_cost
+                    if sql_update_emby(Emby.tg == user_id, iv=new_iv):
+                        coins_deducted = True  # 标记积分已扣除
+                        LOGGER.info(f"【积分扣除】用户 {user_id} 扣除 {coin_cost} 积分，剩余 {new_iv}")
+                    else:
+                        # 积分扣除失败，需要删除已创建的emby账户
+                        await emby.emby_del(id=eid)
+                        await editMessage(send, '❌ 积分扣除失败，注册已回滚', re_create_ikb)
+                        return None
+                else:
+                    # 积分不足，删除已创建的emby账户
+                    await emby.emby_del(id=eid)
+                    current_iv = current_data.iv if current_data else 0
+                    await editMessage(send, f'❌ 积分不足，需要 {coin_cost} 个，当前仅有 {current_iv} 个', re_create_ikb)
+                    return None
+            except Exception as e:
+                # 积分操作异常，删除已创建的emby账户
+                await emby.emby_del(id=eid)
+                await editMessage(send, f'❌ 积分操作失败：{str(e)}', re_create_ikb)
+                LOGGER.error(f"【积分操作】用户 {user_id} 积分操作异常: {str(e)}")
+                return None
+        
+        # 更新数据库
+        try:
+            if stats:
+                success = sql_update_emby(Emby.tg == user_id, embyid=eid, name=emby_name, pwd=pwd, 
+                                        pwd2=emby_pwd2, lv='b', cr=datetime.now(), ex=ex)
+            else:
+                success = sql_update_emby(Emby.tg == user_id, embyid=eid, name=emby_name, pwd=pwd,
+                                        pwd2=emby_pwd2, lv='b', cr=datetime.now(), ex=ex, us=0)
+        except Exception as e:
+            # 数据库更新异常，回滚所有操作
+            await emby.emby_del(id=eid)
+            if coins_deducted and original_iv is not None:
+                try:
+                    sql_update_emby(Emby.tg == user_id, iv=original_iv)
+                    LOGGER.info(f"【回滚】用户 {user_id} 积分已回滚至 {original_iv}")
+                except:
+                    LOGGER.error(f"【回滚异常】用户 {user_id} 积分回滚失败")
+            await editMessage(send, f'❌ 数据库操作异常：{str(e)}', re_create_ikb)
+            LOGGER.error(f"【数据库异常】用户 {user_id} 数据库更新异常: {str(e)}")
+            return None
+        
+        if success:
             # 用户创建成功后，检查是否达到限制并发送相应推送
+            from bot.sql_helper.sql_emby import sql_count_emby
+            from bot.func_helper.utils import send_register_end_message
             tg, current_users, white = sql_count_emby()
+            
+            # 添加超额监控检查
+            try:
+                from bot.func_helper.utils import check_registration_overflow
+                overflow_count = await check_registration_overflow()
+                if overflow_count > 0:
+                    LOGGER.warning(f"【超额检测】用户 {user_id} 注册后检测到超额 {overflow_count} 人")
+            except Exception as e:
+                LOGGER.error(f"【监控异常】超额检查失败: {str(e)}")
+            
             if current_users >= _open.all_user:
                 if _open.coin_register:
                     _open.coin_register = False
                     save_config()
-                    # 发送{sakura_b}注册结束推送，传入开始用户数
-                    asyncio.create_task(send_register_end_message("coin", current_users, start_users))
+                    # 发送{sakura_b}注册结束推送
+                    asyncio.create_task(send_register_end_message("coin", current_users, current_users - 1))
                 elif _open.stat and _open.timing == 0:  # 自由注册（非定时）
                     _open.stat = False
                     save_config()
-                    # 发送自由注册结束推送，传入开始用户数
-                    asyncio.create_task(send_register_end_message("free", current_users, start_users))
-                # 注意：定时注册不在这里处理，在change_for_timing函数中处理
+                    # 发送自由注册结束推送
+                    asyncio.create_task(send_register_end_message("free", current_users, current_users - 1))
             
+            # 格式化到期时间显示
             if schedall.check_ex:
-                ex = ex.strftime("%Y-%m-%d %H:%M:%S")
+                ex_display = ex.strftime("%Y-%m-%d %H:%M:%S")
             elif schedall.low_activity:
-                ex = f'__若{config.keep_alive_days}天无观看将封禁__'
+                ex_display = f'__若{config.keep_alive_days}天无观看将封禁__'
             else:
-                ex = '__无需保号，放心食用__'
-            await editMessage(send,
-                              f'**▎创建用户成功🎉**\n\n'
-                              f'· 用户名称 | `{emby_name}`\n'
-                              f'· 用户密码 | `{pwd}`\n'
-                              f'· 安全密码 | `{emby_pwd2}`（仅发送一次）\n'
-                              f'· 到期时间 | `{ex}`\n'
-                              f'· 当前线路：\n'
-                              f'{emby_line}\n\n'
-                              f'**·【服务器】 - 查看线路和密码**{LOGIN_REMINDER}')
+                ex_display = '__无需保号，放心食用__'
+            
+            # 发送成功消息
+            success_text = f'**▎创建用户成功🎉**\n\n' \
+                          f'· 用户名称 | `{emby_name}`\n' \
+                          f'· 用户密码 | `{pwd}`\n' \
+                          f'· 安全密码 | `{emby_pwd2}`（仅发送一次）\n' \
+                          f'· 到期时间 | `{ex_display}`\n' \
+                          f'· 当前线路：\n' \
+                          f'{emby_line}\n\n' \
+                          f'**·【服务器】 - 查看线路和密码**{LOGIN_REMINDER}'
+            
+            await editMessage(send, success_text)
             LOGGER.info(f"【创建账户】[开注状态]：{call.from_user.id} - 建立了 {emby_name} ") if stats else LOGGER.info(
                 f"【创建账户】：{call.from_user.id} - 建立了 {emby_name} ")
+            return True
+        else:
+            # 数据库更新失败，删除emby账户并回滚积分
+            await emby.emby_del(id=eid)
+            if coins_deducted and original_iv is not None:
+                try:
+                    sql_update_emby(Emby.tg == user_id, iv=original_iv)
+                    LOGGER.info(f"【回滚】用户 {user_id} 积分已回滚至 {original_iv}")
+                except:
+                    LOGGER.error(f"【回滚异常】用户 {user_id} 积分回滚失败")
+            await editMessage(send, '❌ 数据库更新失败，注册已回滚', re_create_ikb)
+            return None
+            
+    except asyncio.TimeoutError:
+        # 超时处理，只在确实扣除积分后才回滚
+        if coins_deducted and original_iv is not None:
+            try:
+                sql_update_emby(Emby.tg == user_id, iv=original_iv)
+                LOGGER.info(f"【回滚】用户 {user_id} 超时后积分已回滚至 {original_iv}")
+            except:
+                LOGGER.error(f"【回滚异常】用户 {user_id} 超时后积分回滚失败")
+        try:
+            await bot.send_message(user_id, '⏰ 注册超时，请重试')
+        except:
+            pass
+        return None
+    except Exception as e:
+        # 异常处理，只在确实扣除积分后才回滚
+        if coins_deducted and original_iv is not None:
+            try:
+                sql_update_emby(Emby.tg == user_id, iv=original_iv)
+                LOGGER.info(f"【回滚】用户 {user_id} 异常后积分已回滚至 {original_iv}")
+            except:
+                LOGGER.error(f"【回滚异常】用户 {user_id} 异常后积分回滚失败")
+        try:
+            await bot.send_message(user_id, f'❌ 注册异常：{str(e)}')
+        except:
+            pass
+        LOGGER.error(f"【注册异常】用户 {user_id} 注册过程异常: {str(e)}")
+        return None
+
+async def create_user(_, call, us, stats, deduct_coins=False, coin_cost=0):
+    """带并发控制的创建用户函数"""
+    
+    user_id = call.from_user.id
+    user_name = call.from_user.first_name or "未知用户"
+    
+    try:
+        # 使用并发控制包装器
+        result = await register_with_concurrency_control(
+            user_id, user_name, create_user_internal, _, call, us, stats, deduct_coins, coin_cost
+        )
+        
+        return result
+            
+    except Exception as e:
+        LOGGER.error(f"创建用户时发生未预期的错误: {e}")
+        try:
+            await bot.send_message(user_id, f"❌ 注册过程中发生错误，请稍后重试")
+        except Exception as send_error:
+            LOGGER.error(f"发送错误消息失败: {send_error}")
+        return None
 
 
 # 键盘中转
@@ -149,23 +315,16 @@ async def members(_, call):
 # 创建账户
 @bot.on_callback_query(filters.regex('create') & user_in_group_on_filter)
 async def create(_, call):
-    """
-
-    当队列已满时，用户会收到等待提示。
-    信号量和计数器正确释放。
-    代码保存至收藏夹，改版时勿忘加入排队机制
-    :param _:
-    :param call:
-    :return:
-    """
-    e = sql_get_emby(tg=call.from_user.id)
-    if not e:
+    data = await members_info(call.from_user.id)
+    if data is None:
         return await callAnswer(call, '⚠️ 数据库没有你，请重新 /start录入', True)
-
-    if e.embyid:
-        await callAnswer(call, '💦 你已经有账户啦！请勿重复注册。', True)
-    elif _open.coin_register:
-        # {sakura_b}注册模式
+    name, lv, ex, us, embyid, pwd2 = data
+    
+    if embyid is not None:
+        return await callAnswer(call, '⚠️ 你已经创建过了账户了', True)
+    
+    e = sql_get_emby(tg=call.from_user.id)
+    if _open.coin_register:
         # 检查人数限制
         tg, current_users, white = sql_count_emby()
         if current_users >= _open.all_user:
@@ -173,14 +332,12 @@ async def create(_, call):
         elif int(e.iv) < _open.coin_cost:
             await callAnswer(call, f'🪙 {sakura_b}注册需要 {_open.coin_cost} 个{sakura_b}，您当前只有 {e.iv} 个{sakura_b}。', True)
         else:
-            send = await callAnswer(call, f'🪙 {sakura_b}注册中，扣除 {_open.coin_cost} 个{sakura_b}。', True)
+            send = await callAnswer(call, f'🪙 {sakura_b}注册中，需要扣除 {_open.coin_cost} 个{sakura_b}。', True)
             if send is False:
                 return
             else:
-                # 扣除{sakura_b}
-                new_iv = int(e.iv) - _open.coin_cost
-                sql_update_emby(Emby.tg == call.from_user.id, iv=new_iv)
-                await create_user(_, call, us=_open.open_us, stats=True)
+                # 注意：积分将在注册成功后才扣除
+                await create_user(_, call, us=_open.open_us, stats=True, deduct_coins=True, coin_cost=_open.coin_cost)
     elif not _open.stat and int(e.us) <= 0:
         await callAnswer(call, f'🤖 自助注册已关闭，等待开启或使用注册码注册。\n\n💡 注册格式：`[用户名] [安全码]`\n如：`苏苏 1234`（安全码需至少4位）', True)
     elif not _open.stat and int(e.us) > 0:

@@ -8,6 +8,159 @@ from cacheout import Cache
 
 cache = Cache()
 
+# 注册并发控制配置
+REGISTRATION_SEMAPHORE = asyncio.Semaphore(8)  # 最多8个并发注册
+REGISTRATION_QUEUE = {}  # 注册队列状态跟踪
+REGISTRATION_STATS = {
+    'total_registrations': 0,
+    'concurrent_registrations': 0,
+    'failed_registrations': 0,
+    'total_time': 0
+}
+
+# 添加一个锁来保护队列操作
+_queue_lock = asyncio.Lock()
+
+class RegistrationController:
+    """注册流程控制器"""
+    
+    @staticmethod
+    async def add_to_queue(user_id, user_name):
+        """添加用户到注册队列"""
+        async with _queue_lock:
+            # 检查用户是否已经在队列中
+            if user_id in REGISTRATION_QUEUE:
+                return None  # 用户已在队列中
+            
+            queue_position = len(REGISTRATION_QUEUE) + 1
+            REGISTRATION_QUEUE[user_id] = {
+                'position': queue_position,
+                'user_name': user_name,
+                'start_time': asyncio.get_event_loop().time(),
+                'status': 'waiting'
+            }
+            return queue_position
+    
+    @staticmethod
+    async def remove_from_queue(user_id):
+        """从队列中移除用户"""
+        async with _queue_lock:
+            REGISTRATION_QUEUE.pop(user_id, None)
+    
+    @staticmethod
+    async def update_status(user_id, status):
+        """更新用户状态（线程安全）"""
+        async with _queue_lock:
+            if user_id in REGISTRATION_QUEUE:
+                REGISTRATION_QUEUE[user_id]['status'] = status
+    
+    @staticmethod
+    async def get_queue_status(user_id):
+        """获取用户在队列中的状态"""
+        return REGISTRATION_QUEUE.get(user_id)
+    
+    @staticmethod
+    async def get_queue_length():
+        """获取当前队列长度"""
+        return len(REGISTRATION_QUEUE)
+
+async def register_with_concurrency_control(user_id, user_name, func, *args, **kwargs):
+    """
+    注册并发控制包装器 - 防止同时过多注册请求
+    """
+    from bot.sql_helper.sql_emby import sql_count_emby
+    from bot import _open, bot, LOGGER
+    
+    # 第一次人数检查：在加入队列前
+    tg, current_count, white = sql_count_emby()
+    if current_count >= _open.all_user:
+        try:
+            await bot.send_message(user_id, f"🚫 很抱歉，注册已满员\n\n当前用户数：{current_count}/{_open.all_user}")
+        except Exception:
+            pass
+        LOGGER.info(f"【注册限制】用户 {user_id} 尝试注册被拒绝：已达人数上限 {current_count}/{_open.all_user}")
+        return None
+    
+    # 检查队列长度
+    async with _queue_lock:
+        current_queue_length = len(REGISTRATION_QUEUE)
+    
+    if current_queue_length >= 25:
+        try:
+            await bot.send_message(user_id, f"🚫 注册人数过多，请稍后再试\n\n当前排队：{current_queue_length}/25")
+        except Exception:
+            pass
+        return None
+    
+    # 添加到队列
+    queue_position = await RegistrationController.add_to_queue(user_id, user_name)
+    if queue_position is None:
+        try:
+            await bot.send_message(user_id, "⚠️ 您已在注册队列中，请耐心等待")
+        except Exception:
+            pass
+        return None
+    
+    try:
+        # 发送队列位置通知
+        if queue_position > 1:
+            try:
+                await bot.send_message(user_id, f"📋 您已加入注册队列\n排队位置：第 {queue_position} 位")
+            except Exception:
+                pass
+        
+        # 获取信号量（等待轮到自己）
+        async with REGISTRATION_SEMAPHORE:
+            try:
+                # 第二次人数检查：在开始注册前（获取信号量后）
+                tg, current_count_final, white = sql_count_emby()
+                if current_count_final >= _open.all_user:
+                    try:
+                        await bot.send_message(user_id, f"🚫 注册期间已达人数限制\n\n当前用户数：{current_count_final}/{_open.all_user}\n\n您的注册已取消")
+                    except Exception:
+                        pass
+                    LOGGER.info(f"【注册限制】用户 {user_id} 注册被取消：注册期间达到人数上限 {current_count_final}/{_open.all_user}")
+                    return None
+                
+                # 更新状态为处理中
+                await RegistrationController.update_status(user_id, 'processing')
+                
+                # 执行实际注册
+                result = await func(*args, **kwargs)
+                
+                # 更新统计
+                REGISTRATION_STATS['total_registrations'] += 1
+                if result:
+                    LOGGER.info(f"【注册成功】用户 {user_id}({user_name}) 注册完成")
+                else:
+                    REGISTRATION_STATS['failed_registrations'] += 1
+                    LOGGER.warning(f"【注册失败】用户 {user_id}({user_name}) 注册失败")
+                
+                return result
+                
+            except Exception as e:
+                REGISTRATION_STATS['failed_registrations'] += 1
+                LOGGER.error(f"【注册异常】用户 {user_id}({user_name}) 注册出现异常: {str(e)}")
+                try:
+                    await bot.send_message(user_id, f"❌ 注册过程中发生错误，请稍后重试")
+                except Exception:
+                    pass
+                return None
+                
+    finally:
+        # 清理队列（确保在所有情况下都能清理）
+        try:
+            await RegistrationController.remove_from_queue(user_id)
+        except Exception as e:
+            LOGGER.error(f"【队列清理】清理用户 {user_id} 队列状态失败: {str(e)}")
+        
+        # 更新并发计数
+        try:
+            async with _queue_lock:
+                REGISTRATION_STATS['concurrent_registrations'] = len(REGISTRATION_QUEUE)
+        except Exception:
+            pass
+
 
 def judge_admins(uid):
     """
@@ -330,3 +483,54 @@ class Singleton(abc.ABCMeta, type):
 #     except Exception as e:
 #         print(e)
 #         # await get_bot_shici()
+
+
+async def check_registration_overflow():
+    """
+    检查注册是否超额的监控函数
+    """
+    from bot.sql_helper.sql_emby import sql_count_emby
+    from bot import _open, LOGGER, bot, owner
+    
+    try:
+        tg, current_count, white = sql_count_emby()
+        if current_count > _open.all_user:
+            overflow_count = current_count - _open.all_user
+            
+            # 记录警告日志
+            LOGGER.warning(f"【超额注册】检测到超额注册：{current_count}/{_open.all_user}，超出{overflow_count}人")
+            
+            # 通知管理员
+            try:
+                await bot.send_message(
+                    owner,
+                    f"⚠️ **超额注册警报**\n\n"
+                    f"• 当前用户数：{current_count}\n"
+                    f"• 设定限制：{_open.all_user}\n"
+                    f"• 超出人数：{overflow_count}\n\n"
+                    f"建议检查并发控制是否正常工作"
+                )
+            except Exception:
+                pass
+            
+            return overflow_count
+        return 0
+    except Exception as e:
+        LOGGER.error(f"【监控异常】检查注册超额状态失败: {str(e)}")
+        return -1
+
+def get_registration_stats():
+    """
+    获取注册统计信息
+    """
+    queue_length = len(REGISTRATION_QUEUE)
+    return {
+        'queue_length': queue_length,
+        'total_registrations': REGISTRATION_STATS['total_registrations'],
+        'failed_registrations': REGISTRATION_STATS['failed_registrations'],
+        'concurrent_registrations': REGISTRATION_STATS['concurrent_registrations'],
+        'success_rate': (
+            (REGISTRATION_STATS['total_registrations'] - REGISTRATION_STATS['failed_registrations']) 
+            / max(REGISTRATION_STATS['total_registrations'], 1) * 100
+        )
+    }
