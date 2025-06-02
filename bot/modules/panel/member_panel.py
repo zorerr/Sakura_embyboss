@@ -195,16 +195,56 @@ async def create_user_internal(_, call, us, stats, deduct_coins=False, coin_cost
                 LOGGER.error(f"【监控异常】超额检查失败: {str(e)}")
             
             if _open.all_user != 999999 and current_users >= _open.all_user:
+                LOGGER.info(f"【自动结束检测】达到人数限制 {current_users}/{_open.all_user}")
                 if _open.coin_register:
+                    LOGGER.info(f"【自动结束】关闭积分注册，当前用户数：{current_users}")
                     _open.coin_register = False
                     save_config()
-                    # 发送{sakura_b}注册结束推送
-                    asyncio.create_task(send_register_end_message("coin", current_users, current_users - 1))
+                    # 发送{sakura_b}注册结束推送到群组
+                    await send_register_end_message("coin", current_users, current_users - 1)
+                    LOGGER.info(f"【自动结束】积分注册群组推送已发送")
+                    
+                    # 发送私信通知给管理员（仿照定时注册的逻辑）
+                    remaining_seats = _open.all_user - current_users if _open.all_user != 999999 else "无限制"
+                    admin_text = f'💰** {sakura_b}注册结束**：\n\n🍉 目前席位：{current_users}\n🥝 新增席位：1\n🍋 剩余席位：{remaining_seats}'
+                    try:
+                        from bot import bot, owner
+                        from bot.func_helper.msg_utils import deleteMessage
+                        admin_msg = await bot.send_message(owner, admin_text)
+                        await deleteMessage(admin_msg, 30)
+                        LOGGER.info(f"【自动结束】积分注册管理员私信已发送")
+                    except Exception as e:
+                        LOGGER.error(f"发送管理员私信通知失败: {e}")
+                    
                 elif _open.stat and _open.timing == 0:  # 自由注册（非定时）
+                    LOGGER.info(f"【自动结束】关闭自由注册，当前用户数：{current_users}")
                     _open.stat = False
                     save_config()
-                    # 发送自由注册结束推送
-                    asyncio.create_task(send_register_end_message("free", current_users, current_users - 1))
+                    # 发送自由注册结束推送到群组
+                    await send_register_end_message("free", current_users, current_users - 1)
+                    LOGGER.info(f"【自动结束】自由注册群组推送已发送")
+                    
+                    # 发送私信通知给管理员（仿照定时注册的逻辑）
+                    remaining_seats = _open.all_user - current_users if _open.all_user != 999999 else "无限制"
+                    admin_text = f'🆓** 自由注册结束**：\n\n🍉 目前席位：{current_users}\n🥝 新增席位：1\n🍋 剩余席位：{remaining_seats}'
+                    try:
+                        from bot import bot, owner
+                        from bot.func_helper.msg_utils import deleteMessage
+                        admin_msg = await bot.send_message(owner, admin_text)
+                        await deleteMessage(admin_msg, 30)
+                        LOGGER.info(f"【自动结束】自由注册管理员私信已发送")
+                    except Exception as e:
+                        LOGGER.error(f"发送管理员私信通知失败: {e}")
+                    
+                elif _open.stat and _open.timing > 0:  # 定时注册
+                    LOGGER.info(f"【自动结束】关闭定时注册，当前用户数：{current_users}")
+                    _open.timing = 0
+                    _open.stat = False
+                    save_config()
+                    # 发送定时注册结束推送到群组
+                    await send_register_end_message("timing", current_users, current_users - 1)
+                    LOGGER.info(f"【自动结束】定时注册群组推送已发送")
+                    # 注意：定时注册的管理员私信通知由admin_panel.py的change_for_timing函数处理
             
             # 格式化到期时间显示
             if schedall.check_ex:
@@ -328,7 +368,7 @@ async def create(_, call):
         # 检查人数限制
         tg, current_users, white = sql_count_emby()
         if _open.all_user != 999999 and current_users >= _open.all_user:
-            all_user_display = "不限制" if _open.all_user == 999999 else str(_open.all_user)
+            all_user_display = "无限制" if _open.all_user == 999999 else str(_open.all_user)
             await callAnswer(call, f'🚫 {sakura_b}注册已满员，当前 {current_users}/{all_user_display}', True)
         elif int(e.iv) < _open.coin_cost:
             await callAnswer(call, f'🪙 {sakura_b}注册需要 {_open.coin_cost} 个{sakura_b}，您当前只有 {e.iv} 个{sakura_b}。', True)

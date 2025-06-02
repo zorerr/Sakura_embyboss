@@ -25,7 +25,7 @@ async def gm_ikb(_, call):
     stat = "True" if stat else "False"
     timing = 'Turn off' if timing == 0 else str(timing) + ' min'
     coin_register = "True" if _open.coin_register else "False"
-    all_user_display = "不限制" if all_user == 999999 else str(all_user)
+    all_user_display = "无限制" if all_user == 999999 else str(all_user)
     tg, emby, white = sql_count_emby()
     gm_text = f'⚙️ 欢迎您，亲爱的管理员 {call.from_user.first_name}\n\n' \
               f'· ®️ 注册状态 | **{stat}**\n' \
@@ -44,7 +44,7 @@ async def open_menu(_, call):
     await callAnswer(call, '®️ register面板')
     # [开关，注册总数，定时注册] 此间只对emby表中tg用户进行统计
     stat, all_user, tem, timing = await open_check()
-    all_user_display = "不限制" if all_user == 999999 else str(all_user)
+    all_user_display = "无限制" if all_user == 999999 else str(all_user)
     tg, emby, white = sql_count_emby()
     openstats = '✅' if stat else '❎'  # 三元运算
     timingstats = '❎' if timing == 0 else '✅'
@@ -72,14 +72,17 @@ async def open_stats(_, call):
         _open.stat = False
         save_config()
         await callAnswer(call, "🟢【自由注册】\n\n已结束", True)
-        all_user_display = "不限制" if all_user == 999999 else str(all_user)
+        all_user_display = "无限制" if all_user == 999999 else str(all_user)
         sur = all_user - tem if all_user != 999999 else "无限制"
+        
+        # 使用统一的推送函数发送自由注册关闭消息
+        await send_register_end_message("free_closed", tem, admin_name=call.from_user.first_name)
+        
+        # 管理员界面更新
         text = f'🫧 管理员 {call.from_user.first_name} 已关闭 **自由注册**\n\n' \
                f'🎫 总注册限制 | {all_user_display}\n🎟️ 已注册人数 | {tem}\n' \
                f'🎭 剩余可注册 | **{sur}**\n🤖 bot使用人数 | {tg}'
-        await asyncio.gather(sendPhoto(call, photo=bot_photo, caption=text, send=True),
-                             editMessage(call, text, buttons=back_free_ikb))
-        # await open_menu(_, call)
+        await editMessage(call, text, buttons=back_free_ikb)
         LOGGER.info(f"【admin】：管理员 {call.from_user.first_name} 关闭了自由注册")
     elif not stat:
         await callAnswer(call, '⭕ 自由注册设置')
@@ -110,7 +113,7 @@ async def open_stats(_, call):
             # 0表示不限制人数
             if open_count == 0:
                 _open.all_user = 999999
-                open_count_display = "不限制"
+                open_count_display = "无限制"
             else:
                 _open.all_user = current_users + open_count
                 open_count_display = str(open_count)
@@ -122,7 +125,7 @@ async def open_stats(_, call):
         else:
             tg, current_users, white = sql_count_emby()
             sur = _open.all_user - current_users if _open.all_user != 999999 else "无限制"
-            total_limit_display = "不限制" if _open.all_user == 999999 else str(_open.all_user)
+            total_limit_display = "无限制" if _open.all_user == 999999 else str(_open.all_user)
             
             await asyncio.gather(sendPhoto(call, photo=bot_photo,
                                            caption=f'🫧 管理员 {call.from_user.first_name} 已开启 **自由注册**\n\n'
@@ -134,7 +137,7 @@ async def open_stats(_, call):
                                              f"总限额：{total_limit_display}（当前{current_users} + 开放{open_count_display}）",
                                              buttons=back_free_ikb))
             
-            open_count_log = "不限制" if open_count == 0 else str(open_count)
+            open_count_log = "无限制" if open_count == 0 else str(open_count)
             LOGGER.info(f"【admin】：管理员 {call.from_user.first_name} 开启了自由注册，开放 {open_count_log} 个名额，总人数限制 {total_limit_display}")
 
 
@@ -184,7 +187,7 @@ async def open_timing(_, call):
             # 0表示不限制人数
             if open_count == 0:
                 _open.all_user = 999999
-                open_count_display = "不限制"
+                open_count_display = "无限制"
             else:
                 _open.all_user = current_users + open_count
                 open_count_display = str(open_count)
@@ -196,7 +199,7 @@ async def open_timing(_, call):
         else:
             tg, current_users, white = sql_count_emby()
             sur = _open.all_user - current_users if _open.all_user != 999999 else "无限制"
-            total_limit_display = "不限制" if _open.all_user == 999999 else str(_open.all_user)
+            total_limit_display = "无限制" if _open.all_user == 999999 else str(_open.all_user)
             
             await asyncio.gather(sendPhoto(call, photo=bot_photo,
                                            caption=f'🫧 管理员 {call.from_user.first_name} 已开启 **定时注册**\n\n'
@@ -209,7 +212,7 @@ async def open_timing(_, call):
                                              f"总限额：{total_limit_display}（当前{current_users} + 开放{open_count_display}）",
                                              buttons=back_free_ikb))
             
-            open_count_log = "不限制" if open_count == 0 else str(open_count)
+            open_count_log = "无限制" if open_count == 0 else str(open_count)
             LOGGER.info(
                 f"【admin】-定时注册：管理员 {call.from_user.first_name} 开启了定时注册 {_open.timing} min，开放 {open_count_log} 个名额，总人数限制 {total_limit_display}")
             # 创建一个异步任务并保存为变量，并给它一个名字
@@ -229,17 +232,15 @@ async def open_timing(_, call):
         else:
             # 手动关闭定时注册，发送管理员关闭消息到群组
             original_timing = _open.timing  # 保存原定时长
+            _open.original_timing = original_timing  # 保存到_open对象中供推送使用
             _open.timing = 0
             _open.stat = False
             save_config()
             
             tg, current_users, white = sql_count_emby()
-            all_user_display = "不限制" if _open.all_user == 999999 else str(_open.all_user)
-            sur = _open.all_user - current_users if _open.all_user != 999999 else "无限制"
-            text = f'🫧 管理员 {call.from_user.first_name} 已关闭 **定时注册**\n\n' \
-                   f'⏳ 原定时长 | {original_timing} min（已终止）\n🎫 总注册限制 | {all_user_display}\n🎟️ 已注册人数 | {current_users}\n' \
-                   f'🎭 剩余可注册 | **{sur}**\n🤖 bot使用人数 | {tg}'
-            await sendPhoto(call, photo=bot_photo, caption=text, send=True)
+            
+            # 使用统一的推送函数发送定时注册关闭消息
+            await send_register_end_message("timing_closed", current_users, admin_name=call.from_user.first_name)
             
             await callAnswer(call, "Ⓜ️【定时任务运行终止】\n\n**已为您停止**", True)
             await open_menu(_, call)
@@ -263,15 +264,18 @@ async def change_for_timing(timing, tgid, call):
             b = _open.tem - a
             s = _open.all_user - _open.tem if _open.all_user != 999999 else "无限制"
             
-            # 使用统一的推送函数发送定时注册结束消息，传入开始用户数
+            # 使用统一的推送函数发送定时注册结束消息到群组
             await send_register_end_message("timing", _open.tem, a)
             
-            # 同时保留原有的管理员私信通知逻辑
-            text = f'⏳** 注册结束**：\n\n🍉 目前席位：{_open.tem}\n🥝 新增席位：{b}\n🍋 剩余席位：{s}'
-            send = await sendPhoto(call, photo=bot_photo, caption=text, timer=300, send=True)
-            send1 = await send.forward(tgid)
+            # 发送私信通知给管理员（不是群组推送，避免重复）
+            admin_text = f'⏳** 定时注册结束**：\n\n🍉 目前席位：{_open.tem}\n🥝 新增席位：{b}\n🍋 剩余席位：{s}'
+            try:
+                admin_msg = await bot.send_message(tgid, admin_text)
+                await deleteMessage(admin_msg, 30)
+            except Exception as e:
+                LOGGER.error(f"发送管理员私信通知失败: {e}")
+                
             LOGGER.info(f'【admin】-定时注册：运行结束，本次注册 目前席位：{_open.tem}  新增席位:{b}  剩余席位：{s}')
-            await deleteMessage(send1, 30)
 
 
 @bot.on_callback_query(filters.regex('open_coin_register') & admins_on_filter)
@@ -288,13 +292,17 @@ async def open_coin_register(_, call):
         _open.coin_register = False
         save_config()
         await callAnswer(call, f"🟢【{sakura_b}注册】\n\n已结束", True)
-        all_user_display = "不限制" if _open.all_user == 999999 else str(_open.all_user)
+        all_user_display = "无限制" if _open.all_user == 999999 else str(_open.all_user)
         sur = _open.all_user - current_users if _open.all_user != 999999 else "无限制"
+        
+        # 使用统一的推送函数发送积分注册关闭消息
+        await send_register_end_message("coin_closed", current_users, admin_name=call.from_user.first_name)
+        
+        # 管理员界面更新
         text = f'🫧 管理员 {call.from_user.first_name} 已关闭 **{sakura_b}注册**\n\n' \
                f'💰 所需{sakura_b} | {_open.coin_cost}\n🎫 总注册限制 | {all_user_display}\n🎟️ 已注册人数 | {current_users}\n' \
                f'🎭 剩余可注册 | **{sur}**\n🤖 bot使用人数 | {tg}'
-        await asyncio.gather(sendPhoto(call, photo=bot_photo, caption=text, send=True),
-                             editMessage(call, text, buttons=back_free_ikb))
+        await editMessage(call, text, buttons=back_free_ikb)
         LOGGER.info(f"【admin】：管理员 {call.from_user.first_name} 关闭了{sakura_b}注册")
     elif not _open.coin_register:
         await callAnswer(call, f'⭕ {sakura_b}注册设置')
@@ -329,7 +337,7 @@ async def open_coin_register(_, call):
             # 0表示不限制人数
             if open_count == 0:
                 _open.all_user = 999999
-                open_count_display = "不限制"
+                open_count_display = "无限制"
             else:
                 _open.all_user = current_users + open_count
                 open_count_display = str(open_count)
@@ -341,7 +349,7 @@ async def open_coin_register(_, call):
         else:
             tg, current_users, white = sql_count_emby()
             sur = _open.all_user - current_users if _open.all_user != 999999 else "无限制"
-            total_limit_display = "不限制" if _open.all_user == 999999 else str(_open.all_user)
+            total_limit_display = "无限制" if _open.all_user == 999999 else str(_open.all_user)
             
             await asyncio.gather(sendPhoto(call, photo=bot_photo,
                                            caption=f'🫧 管理员 {call.from_user.first_name} 已开启 **{sakura_b}注册**\n\n'
@@ -353,7 +361,7 @@ async def open_coin_register(_, call):
                                              f"总限额：{total_limit_display}（当前{current_users} + 开放{open_count_display}）",
                                              buttons=back_free_ikb))
             
-            open_count_log = "不限制" if open_count == 0 else str(open_count)
+            open_count_log = "无限制" if open_count == 0 else str(open_count)
             LOGGER.info(f"【admin】：管理员 {call.from_user.first_name} 开启了{sakura_b}注册，需要 {coin_cost} 个{sakura_b}，开放 {open_count_log} 个名额，总人数限制 {total_limit_display}")
 
 

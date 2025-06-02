@@ -222,16 +222,19 @@ def tem_deluser():
     save_config()
 
 
-async def send_register_end_message(register_mode, current_users, start_users=None):
+async def send_register_end_message(register_mode, current_users, start_users=None, admin_name=None):
     """发送注册结束消息到群组
     
     Args:
-        register_mode: 注册模式 ("coin", "free", "timing")
+        register_mode: 注册模式 ("coin", "free", "timing", "coin_closed", "free_closed", "timing_closed")
         current_users: 当前注册用户数
         start_users: 注册开始时的用户数（可选，用于计算新增席位）
+        admin_name: 管理员名称（用于手动关闭的情况）
     """
-    from bot import sakura_b, bot_photo, bot
+    from bot import sakura_b, bot_photo, bot, LOGGER
     from bot.sql_helper.sql_emby import sql_count_emby
+    
+    LOGGER.info(f"【群组推送】开始发送 {register_mode} 模式注册结束消息")
     
     # 重新获取最新数据以确保准确性
     tg, final_users, white = sql_count_emby()
@@ -243,7 +246,13 @@ async def send_register_end_message(register_mode, current_users, start_users=No
         # 如果没有提供开始用户数，则使用当前用户数作为新增（向后兼容）
         new_seats = 0
     
-    remaining_seats = _open.all_user - final_users if final_users < _open.all_user else 0
+    # 处理剩余席位显示：999999表示无限制
+    if _open.all_user == 999999:
+        remaining_seats = "无限制"
+        all_user_display = "无限制"
+    else:
+        remaining_seats = _open.all_user - final_users if final_users < _open.all_user else 0
+        all_user_display = str(_open.all_user)
     
     # 根据注册模式生成不同的推送消息
     if register_mode == "coin":
@@ -252,13 +261,32 @@ async def send_register_end_message(register_mode, current_users, start_users=No
         text = f'🆓** 自由注册结束**：\n\n🍉 目前席位：{final_users}\n🥝 新增席位：{new_seats}\n🍋 剩余席位：{remaining_seats}'
     elif register_mode == "timing":
         text = f'⏳** 定时注册结束**：\n\n🍉 目前席位：{final_users}\n🥝 新增席位：{new_seats}\n🍋 剩余席位：{remaining_seats}'
+    elif register_mode == "coin_closed":
+        register_type = f"{sakura_b}注册"
+        text = f'🫧 管理员 {admin_name or "未知"} 已关闭 **{register_type}**\n\n' \
+               f'💰 所需{sakura_b} | {_open.coin_cost}\n🎫 总注册限制 | {all_user_display}\n🎟️ 已注册人数 | {final_users}\n' \
+               f'🎭 剩余可注册 | **{remaining_seats}**\n🤖 bot使用人数 | {tg}'
+    elif register_mode == "free_closed":
+        register_type = "自由注册"
+        text = f'🫧 管理员 {admin_name or "未知"} 已关闭 **{register_type}**\n\n' \
+               f'🎫 总注册限制 | {all_user_display}\n🎟️ 已注册人数 | {final_users}\n' \
+               f'🎭 剩余可注册 | **{remaining_seats}**\n🤖 bot使用人数 | {tg}'
+    elif register_mode == "timing_closed":
+        register_type = "定时注册"
+        text = f'🫧 管理员 {admin_name or "未知"} 已关闭 **{register_type}**\n\n' \
+               f'⏳ 原定时长 | {getattr(_open, "original_timing", "未知")} min（已终止）\n🎫 总注册限制 | {all_user_display}\n🎟️ 已注册人数 | {final_users}\n' \
+               f'🎭 剩余可注册 | **{remaining_seats}**\n🤖 bot使用人数 | {tg}'
     else:
         text = f'📝** 注册结束**：\n\n🍉 目前席位：{final_users}\n🥝 新增席位：{new_seats}\n🍋 剩余席位：{remaining_seats}'
+    
+    LOGGER.info(f"【群组推送】推送内容：{text[:100]}...")
     
     # 发送到主群组
     try:
         await bot.send_photo(chat_id=group[0], photo=bot_photo, caption=text)
+        LOGGER.info(f"【群组推送】{register_mode} 模式推送成功发送到群组 {group[0]}")
     except Exception as e:
+        LOGGER.error(f"【群组推送】发送注册结束消息失败: {e}")
         print(f"发送注册结束消息失败: {e}")
 
 
