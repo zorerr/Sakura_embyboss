@@ -72,13 +72,15 @@ async def _handle_post_registration_tasks(user_id, _open, save_config):
                 remaining_seats = _open.all_user - current_users if _open.all_user != 999999 else "无限制"
                 admin_text = f'💰** {sakura_b}注册结束**：\n\n🍉 目前席位：{current_users}\n🥝 新增席位：1\n🍋 剩余席位：{remaining_seats}'
                 try:
-                    from bot import bot, owner
+                    from bot import bot, owner, sakura_b as sb
                     from bot.func_helper.msg_utils import deleteMessage
+                    # 重新构建消息文本，使用本地导入的变量
+                    admin_text = f'💰** {sb}注册结束**：\n\n🍉 目前席位：{current_users}\n🥝 新增席位：1\n🍋 剩余席位：{remaining_seats}'
                     admin_msg = await bot.send_message(owner, admin_text)
                     await deleteMessage(admin_msg, 30)
                     LOGGER.info(f"【自动结束】积分注册管理员私信已发送")
                 except Exception as e:
-                    LOGGER.error(f"发送管理员私信通知失败: {e}")
+                    LOGGER.error(f"【管理员私信】积分注册结束通知失败: {e}")
                 
             elif _open.stat and _open.timing == 0:  # 自由注册（非定时）
                 LOGGER.info(f"【自动结束】关闭自由注册，当前用户数：{current_users}")
@@ -92,13 +94,15 @@ async def _handle_post_registration_tasks(user_id, _open, save_config):
                 remaining_seats = _open.all_user - current_users if _open.all_user != 999999 else "无限制"
                 admin_text = f'🆓** 自由注册结束**：\n\n🍉 目前席位：{current_users}\n🥝 新增席位：1\n🍋 剩余席位：{remaining_seats}'
                 try:
-                    from bot import bot, owner
+                    from bot import bot, owner, sakura_b as sb
                     from bot.func_helper.msg_utils import deleteMessage
+                    # 重新构建消息文本，使用本地导入的变量
+                    admin_text = f'🆓** 自由注册结束**：\n\n🍉 目前席位：{current_users}\n🥝 新增席位：1\n🍋 剩余席位：{remaining_seats}'
                     admin_msg = await bot.send_message(owner, admin_text)
                     await deleteMessage(admin_msg, 30)
                     LOGGER.info(f"【自动结束】自由注册管理员私信已发送")
                 except Exception as e:
-                    LOGGER.error(f"发送管理员私信通知失败: {e}")
+                    LOGGER.error(f"【管理员私信】自由注册结束通知失败: {e}")
                 
             elif _open.stat and _open.timing > 0:  # 定时注册
                 LOGGER.info(f"【自动结束】关闭定时注册，当前用户数：{current_users}")
@@ -108,7 +112,17 @@ async def _handle_post_registration_tasks(user_id, _open, save_config):
                 # 发送定时注册结束推送到群组
                 await send_register_end_message("timing", current_users, current_users - 1)
                 LOGGER.info(f"【自动结束】定时注册群组推送已发送")
-                # 注意：定时注册的管理员私信通知由admin_panel.py的change_for_timing函数处理
+                # 发送私信通知给管理员
+                remaining_seats = _open.all_user - current_users if _open.all_user != 999999 else "无限制"
+                admin_text = f'⏳** 定时注册结束**：\n\n🍉 目前席位：{current_users}\n🥝 新增席位：1\n🍋 剩余席位：{remaining_seats}'
+                try:
+                    from bot import bot, owner
+                    from bot.func_helper.msg_utils import deleteMessage
+                    admin_msg = await bot.send_message(owner, admin_text)
+                    await deleteMessage(admin_msg, 30)
+                    LOGGER.info(f"【自动结束】定时注册管理员私信已发送")
+                except Exception as e:
+                    LOGGER.error(f"【管理员私信】定时注册结束通知失败: {e}")
                 
     except Exception as e:
         LOGGER.error(f"【后台任务】用户 {user_id} 后台任务处理异常: {str(e)}")

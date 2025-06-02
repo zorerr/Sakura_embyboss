@@ -100,17 +100,17 @@ async def register_with_concurrency_control(user_id, user_name, func, *args, **k
         # 这避免了获取后又释放的资源浪费
         start_time = time.time()
         if current_queue_length == 0:
-            LOGGER.info(f"【快速通道】用户 {user_id}({user_name}) 开始注册 - 无队列等待")
+            LOGGER.debug(f"【快速通道】用户 {user_id}({user_name}) 开始注册 - 无队列等待")
         else:
-            LOGGER.info(f"【优先处理】用户 {user_id}({user_name}) 开始注册 - 获得信号量优先权")
+            LOGGER.debug(f"【优先处理】用户 {user_id}({user_name}) 开始注册 - 获得信号量优先权")
         
         try:
             result = await func(*args, **kwargs)
             process_time = time.time() - start_time
             if current_queue_length == 0:
-                LOGGER.info(f"【快速通道】用户 {user_id}({user_name}) 注册完成 - 耗时 {process_time:.2f}秒")
+                LOGGER.debug(f"【快速通道】用户 {user_id}({user_name}) 注册完成 - 耗时 {process_time:.2f}秒")
             else:
-                LOGGER.info(f"【优先处理】用户 {user_id}({user_name}) 注册完成 - 耗时 {process_time:.2f}秒")
+                LOGGER.debug(f"【优先处理】用户 {user_id}({user_name}) 注册完成 - 耗时 {process_time:.2f}秒")
             return result
         except Exception as e:
             LOGGER.error(f"【注册失败】用户 {user_id}({user_name}) 注册失败: {e}")
