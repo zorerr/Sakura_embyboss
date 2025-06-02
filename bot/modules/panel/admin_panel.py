@@ -263,21 +263,10 @@ async def change_for_timing(timing, tgid, call):
             _open.timing = 0
             _open.stat = False
             save_config()
-            b = _open.tem - a
-            s = _open.all_user - _open.tem if _open.all_user != 999999 else "无限制"
             
-            # 使用统一的推送函数发送定时注册结束消息到群组
-            await send_register_end_message("timing", _open.tem, a)
-            
-            # 发送私信通知给管理员（不是群组推送，避免重复）
-            admin_text = f'⏳** 定时注册结束**：\n\n🍉 目前席位：{_open.tem}\n🥝 新增席位：{b}\n🍋 剩余席位：{s}'
-            try:
-                admin_msg = await bot.send_message(tgid, admin_text)
-                await deleteMessage(admin_msg, 30)
-            except Exception as e:
-                LOGGER.error(f"发送管理员私信通知失败: {e}")
-                
-            LOGGER.info(f'【admin】-定时注册：运行结束，本次注册 目前席位：{_open.tem}  新增席位:{b}  剩余席位：{s}')
+            # 调用统一的定时注册结束推送处理函数
+            from bot.modules.panel.member_panel import _handle_timing_registration_end
+            await _handle_timing_registration_end(a, tgid)
 
 
 @bot.on_callback_query(filters.regex('open_coin_register') & admins_on_filter)

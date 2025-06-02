@@ -106,6 +106,19 @@ async def _handle_post_registration_tasks(user_id, _open, save_config):
                 
             elif _open.stat and _open.timing > 0:  # 定时注册
                 LOGGER.info(f"【自动结束】关闭定时注册，当前用户数：{current_users}")
+                
+                # 取消定时任务，避免重复推送
+                try:
+                    import asyncio
+                    # 遍历所有的异步任务，找到'change_for_timing'，取消
+                    for task in asyncio.all_tasks():
+                        if task.get_name() == 'change_for_timing':
+                            task.cancel()
+                            LOGGER.info(f"【自动结束】定时注册任务已取消，原因人数上限，避免重复推送")
+                            break
+                except Exception as e:
+                    LOGGER.error(f"【自动结束】取消定时注册任务失败: {e}")
+                
                 _open.timing = 0
                 _open.stat = False
                 save_config()
@@ -126,6 +139,39 @@ async def _handle_post_registration_tasks(user_id, _open, save_config):
                 
     except Exception as e:
         LOGGER.error(f"【后台任务】用户 {user_id} 后台任务处理异常: {str(e)}")
+
+# 定时注册自动结束推送处理函数
+async def _handle_timing_registration_end(start_user_count, tgid):
+    """
+    处理定时注册的自动结束推送逻辑
+    :param start_user_count: 注册开始时的用户数
+    :param tgid: 管理员TG ID
+    """
+    try:
+        from bot.func_helper.utils import send_register_end_message
+        from bot import bot
+        from bot.func_helper.msg_utils import deleteMessage
+        
+        # 计算统计数据
+        current_user_count = _open.tem
+        new_seats = current_user_count - start_user_count
+        remaining_seats = _open.all_user - current_user_count if _open.all_user != 999999 else "无限制"
+        
+        # 使用统一的推送函数发送定时注册结束消息到群组
+        await send_register_end_message("timing", current_user_count, start_user_count)
+        
+        # 发送私信通知给管理员（不是群组推送，避免重复）
+        admin_text = f'⏳** 定时注册结束**：\n\n🍉 目前席位：{current_user_count}\n🥝 新增席位：{new_seats}\n🍋 剩余席位：{remaining_seats}'
+        try:
+            admin_msg = await bot.send_message(tgid, admin_text)
+            await deleteMessage(admin_msg, 30)
+        except Exception as e:
+            LOGGER.error(f"发送管理员私信通知失败: {e}")
+            
+        LOGGER.info(f'【admin】-定时注册：运行结束，本次注册 目前席位：{current_user_count}  新增席位:{new_seats}  剩余席位：{remaining_seats}')
+        
+    except Exception as e:
+        LOGGER.error(f"【定时注册结束推送】处理异常: {str(e)}")
 
 # 创号函数
 async def create_user_internal(_, call, us, stats, deduct_coins=False, coin_cost=0):
