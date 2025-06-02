@@ -250,7 +250,7 @@ async def create_user_internal(_, call, us, stats, deduct_coins=False, coin_cost
         
         # 添加超时控制的emby api操作
         try:
-            LOGGER.info(f"【开始注册】用户 {user_id}({user_name}) 开始创建Emby账户")
+            LOGGER.debug(f"【开始注册】用户 {user_id}({user_name}) 开始创建Emby账户")
             data = await asyncio.wait_for(emby.emby_create(emby_name, us, progress_callback=update_progress), timeout=60.0)
         except asyncio.TimeoutError:
             await editMessage(send,
@@ -274,7 +274,7 @@ async def create_user_internal(_, call, us, stats, deduct_coins=False, coin_cost
         
         # 解包emby创建结果
         eid, pwd, ex = data
-        LOGGER.info(f"【账户创建】用户 {user_id} Emby账户创建成功，ID: {eid}")
+        LOGGER.debug(f"【账户创建】用户 {user_id} Emby账户创建成功，ID: {eid}")
         
         # 创建成功后才扣除积分（如果需要）
         if deduct_coins and coin_cost > 0:
@@ -285,7 +285,7 @@ async def create_user_internal(_, call, us, stats, deduct_coins=False, coin_cost
                     new_iv = original_iv - coin_cost
                     if sql_update_emby(Emby.tg == user_id, iv=new_iv):
                         coins_deducted = True  # 标记积分已扣除
-                        LOGGER.info(f"【积分扣除】用户 {user_id} 扣除 {coin_cost} 积分，剩余 {new_iv}")
+                        LOGGER.debug(f"【积分扣除】用户 {user_id} 扣除 {coin_cost} 积分，剩余 {new_iv}")
                     else:
                         # 积分扣除失败，需要删除已创建的emby账户
                         await emby.emby_del(id=eid)
@@ -337,7 +337,7 @@ async def create_user_internal(_, call, us, stats, deduct_coins=False, coin_cost
             if coins_deducted and original_iv is not None:
                 try:
                     sql_update_emby(Emby.tg == user_id, iv=original_iv)
-                    LOGGER.info(f"【回滚】用户 {user_id} 积分已回滚至 {original_iv}")
+                    LOGGER.debug(f"【回滚】用户 {user_id} 积分已回滚至 {original_iv}")
                 except:
                     LOGGER.error(f"【回滚异常】用户 {user_id} 积分回滚失败")
             await editMessage(send, f'❌ 数据库操作异常：{str(e)}', re_create_ikb)
@@ -376,7 +376,7 @@ async def create_user_internal(_, call, us, stats, deduct_coins=False, coin_cost
             if coins_deducted and original_iv is not None:
                 try:
                     sql_update_emby(Emby.tg == user_id, iv=original_iv)
-                    LOGGER.info(f"【回滚】用户 {user_id} 积分已回滚至 {original_iv}")
+                    LOGGER.debug(f"【回滚】用户 {user_id} 积分已回滚至 {original_iv}")
                 except:
                     LOGGER.error(f"【回滚异常】用户 {user_id} 积分回滚失败")
             await editMessage(send, '❌ 数据库更新失败，注册已回滚', re_create_ikb)
@@ -387,7 +387,7 @@ async def create_user_internal(_, call, us, stats, deduct_coins=False, coin_cost
         if coins_deducted and original_iv is not None:
             try:
                 sql_update_emby(Emby.tg == user_id, iv=original_iv)
-                LOGGER.info(f"【回滚】用户 {user_id} 超时后积分已回滚至 {original_iv}")
+                LOGGER.debug(f"【回滚】用户 {user_id} 超时后积分已回滚至 {original_iv}")
             except:
                 LOGGER.error(f"【回滚异常】用户 {user_id} 超时后积分回滚失败")
         try:
@@ -400,7 +400,7 @@ async def create_user_internal(_, call, us, stats, deduct_coins=False, coin_cost
         if coins_deducted and original_iv is not None:
             try:
                 sql_update_emby(Emby.tg == user_id, iv=original_iv)
-                LOGGER.info(f"【回滚】用户 {user_id} 异常后积分已回滚至 {original_iv}")
+                LOGGER.debug(f"【回滚】用户 {user_id} 异常后积分已回滚至 {original_iv}")
             except:
                 LOGGER.error(f"【回滚异常】用户 {user_id} 异常后积分回滚失败")
         try:
@@ -760,10 +760,10 @@ async def del_emby(_, call):
         if send1 is False:
             return
 
-        LOGGER.info(f"【删除账号】：{call.from_user.id} 已删除！")
+        LOGGER.info(f"【删除账号】：{call.from_user.id} 自己删除了账号！")
     else:
         await editMessage(call, '🥧 蛋糕辣~ 好像哪里出问题了，请向管理反应', buttons=back_members_ikb)
-        LOGGER.error(f"【删除账号】：{call.from_user.id} 失败！")
+        LOGGER.error(f"【删除账号】：{call.from_user.id} 自己删除账号失败！")
 
 
 # 重置密码为空密码

@@ -137,7 +137,7 @@ async def register_with_concurrency_control(user_id, user_name, func, *args, **k
             'join_time': queue_start_time
         })
     
-    LOGGER.info(f"【队列模式】用户 {user_id}({user_name}) 加入注册队列，位置: {queue_position}")
+    LOGGER.debug(f"【队列模式】用户 {user_id}({user_name}) 加入注册队列，位置: {queue_position}")
     
     # 获取信号量（进入队列等待）
     semaphore_acquired = False
@@ -158,13 +158,13 @@ async def register_with_concurrency_control(user_id, user_name, func, *args, **k
         # 获取信号量后，立即执行注册
         wait_time = time.time() - queue_start_time
         start_time = time.time()
-        LOGGER.info(f"【队列处理】用户 {user_id}({user_name}) 开始注册 - 等待时间 {wait_time:.2f}秒")
+        LOGGER.debug(f"【队列处理】用户 {user_id}({user_name}) 开始注册 - 等待时间 {wait_time:.2f}秒")
         
         try:
             result = await func(*args, **kwargs)
             process_time = time.time() - start_time
             total_time = time.time() - queue_start_time
-            LOGGER.info(f"【队列完成】用户 {user_id}({user_name}) 注册完成 - 处理时间 {process_time:.2f}秒，总时间 {total_time:.2f}秒")
+            LOGGER.debug(f"【队列完成】用户 {user_id}({user_name}) 注册完成 - 处理时间 {process_time:.2f}秒，总时间 {total_time:.2f}秒")
             return result
         except Exception as e:
             LOGGER.error(f"【队列失败】用户 {user_id}({user_name}) 注册失败: {e}")
@@ -260,7 +260,7 @@ async def send_register_end_message(register_mode, current_users, start_users=No
     from bot import sakura_b, bot_photo, bot, LOGGER
     from bot.sql_helper.sql_emby import sql_count_emby
     
-    LOGGER.info(f"【群组推送】开始发送 {register_mode} 模式注册结束消息")
+    LOGGER.debug(f"【群组推送】开始发送 {register_mode} 模式注册结束消息")
     
     # 重新获取最新数据以确保准确性
     tg, final_users, white = sql_count_emby()
@@ -305,12 +305,12 @@ async def send_register_end_message(register_mode, current_users, start_users=No
     else:
         text = f'📝** 注册结束**：\n\n🍉 目前席位：{final_users}\n🥝 新增席位：{new_seats}\n🍋 剩余席位：{remaining_seats}'
     
-    LOGGER.info(f"【群组推送】推送内容：{text[:100]}...")
+    LOGGER.debug(f"【群组推送】推送内容：{text[:100]}...")
     
     # 发送到主群组
     try:
         await bot.send_photo(chat_id=group[0], photo=bot_photo, caption=text)
-        LOGGER.info(f"【群组推送】{register_mode} 模式推送成功发送到群组 {group[0]}")
+        LOGGER.debug(f"【群组推送】{register_mode} 模式推送成功发送到群组 {group[0]}")
     except Exception as e:
         LOGGER.error(f"【群组推送】发送注册结束消息失败: {e}")
         print(f"发送注册结束消息失败: {e}")
