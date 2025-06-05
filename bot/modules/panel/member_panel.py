@@ -16,7 +16,7 @@ from pyrogram import filters
 from pyrogram.types import CallbackQuery
 from bot.func_helper.emby import emby
 from bot.func_helper.filters import user_in_group_on_filter
-from bot.func_helper.utils import members_info, cr_link_one, judge_admins, tem_deluser, pwd_create, send_register_end_message, register_with_concurrency_control
+from bot.func_helper.utils import members_info, cr_link_one, judge_admins, tem_deluser, pwd_create, send_register_end_message
 from bot.func_helper.fix_bottons import members_ikb, back_members_ikb, re_create_ikb, del_me_ikb, re_delme_ikb, \
     re_reset_ikb, re_changetg_ikb, emby_block_ikb, user_emby_block_ikb, user_emby_unblock_ikb, re_exchange_b_ikb, \
     store_ikb, re_bindtg_ikb, close_it_ikb, store_query_page, re_born_ikb, send_changetg_ikb, favorites_page_ikb
@@ -48,15 +48,6 @@ async def _handle_post_registration_tasks(user_id, _open, save_config):
         from bot.sql_helper.sql_emby import sql_count_emby
         from bot.func_helper.utils import send_register_end_message
         tg, current_users, white = sql_count_emby()
-        
-        # 添加超额监控检查
-        try:
-            from bot.func_helper.utils import check_registration_overflow
-            overflow_count = await check_registration_overflow()
-            if overflow_count > 0:
-                LOGGER.warning(f"【超额检测】用户 {user_id} 注册后检测到超额 {overflow_count} 人")
-        except Exception as e:
-            LOGGER.error(f"【监控异常】超额检查失败: {str(e)}")
         
         if _open.all_user != 999999 and current_users >= _open.all_user:
             LOGGER.info(f"【自动结束检测】达到人数限制 {current_users}/{_open.all_user}")
@@ -457,16 +448,14 @@ async def create_user_internal(_, call, us, stats, deduct_coins=False, coin_cost
         return None
 
 async def create_user(_, call, us, stats, deduct_coins=False, coin_cost=0):
-    """带并发控制的创建用户函数"""
+    """创建用户函数"""
     
     user_id = call.from_user.id
     user_name = call.from_user.first_name or "未知用户"
     
     try:
-        # 使用并发控制包装器
-        result = await register_with_concurrency_control(
-            user_id, user_name, create_user_internal, _, call, us, stats, deduct_coins, coin_cost
-        )
+        # 直接调用内部函数
+        result = await create_user_internal(_, call, us, stats, deduct_coins, coin_cost)
         
         return result
             
@@ -1065,10 +1054,10 @@ async def do_store_invite(_, call):
             cost = math.floor((days * count / 30) * _open.invite_cost)
             if e.iv < cost:
                 return await asyncio.gather(content.delete(),
-                                            sendMessage(call,
-                                                        f'您只有 {e.iv}{sakura_b}，而您需要花费 {cost}，超前消费是不可取的哦！？',
-                                                        timer=10),
-                                            do_store(_, call))
+                                          sendMessage(call,
+                                                      f'您只有 {e.iv}{sakura_b}，而您需要花费 {cost}，超前消费是不可取的哦！？',
+                                                      timer=10),
+                                          do_store(_, call))
             method = getattr(ExDate(), method)
         except (AttributeError, ValueError, IndexError):
             return await asyncio.gather(sendMessage(call, f'⚠️ 检查输入，格式似乎有误\n{content.text}', timer=10),
