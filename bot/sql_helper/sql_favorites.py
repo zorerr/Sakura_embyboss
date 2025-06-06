@@ -46,7 +46,7 @@ def sql_add_favorites(embyid: str, embyname: str, item_id: str, item_name: str, 
                     existing.embyname = embyname
                     existing.item_name = item_name
                     existing.created_at = datetime.now()
-                    LOGGER.info(f"更新收藏记录: {embyname} -> {item_name}")
+                    LOGGER.debug(f"更新收藏记录: {embyname} -> {item_name}")
                 else:
                     # 创建新记录
                     favorite = EmbyFavorites(
@@ -56,12 +56,12 @@ def sql_add_favorites(embyid: str, embyname: str, item_id: str, item_name: str, 
                         item_name=item_name
                     )
                     session.add(favorite)
-                    LOGGER.info(f"新增收藏记录: {embyname} -> {item_name}")
+                    LOGGER.debug(f"新增收藏记录: {embyname} -> {item_name}")
             else:
                 if existing:
                     # 删除记录
                     session.delete(existing)
-                    LOGGER.info(f"删除收藏记录: {embyname} -> {item_name}")
+                    LOGGER.debug(f"删除收藏记录: {embyname} -> {item_name}")
                     
             session.commit()
             return True

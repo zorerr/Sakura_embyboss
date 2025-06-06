@@ -7,12 +7,69 @@ Date:2024/8/27
 """
 import asyncio
 import errno
+import logging
+import re
 
 from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
 
 from .api import emby_api_route, user_api_route
 from bot import api as config_api, LOGGER
+
+
+# 创建一个自定义的日志过滤器，用于过滤掉webhook相关的访问日志
+class WebhookFilter(logging.Filter):
+    def filter(self, record):
+        # 如果日志消息中包含webhook相关的URL，则不记录该日志
+        if hasattr(record, 'args') and len(record.args) >= 3:
+            request_line = record.args[2]
+            if isinstance(request_line, str) and ("/webhook/" in request_line):
+                return False
+        return True
+
+# 获取uvicorn的访问日志记录器并添加过滤器
+uvicorn_access_logger = logging.getLogger("uvicorn.access")
+uvicorn_access_logger.addFilter(WebhookFilter())
+
+# 自定义日志配置
+log_config = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "default": {
+            "()": "uvicorn.logging.DefaultFormatter",
+            "fmt": "%(levelprefix)s %(message)s",
+            "use_colors": None,
+        },
+        "access": {
+            "()": "uvicorn.logging.AccessFormatter",
+            "fmt": '%(levelprefix)s %(client_addr)s - "%(request_line)s" %(status_code)s',
+        },
+    },
+    "handlers": {
+        "default": {
+            "formatter": "default",
+            "class": "logging.StreamHandler",
+            "stream": "ext://sys.stderr",
+        },
+        "access": {
+            "formatter": "access",
+            "class": "logging.StreamHandler",
+            "stream": "ext://sys.stdout",
+            "filters": ["webhook_filter"],
+        },
+    },
+    "filters": {
+        "webhook_filter": {
+            "()": WebhookFilter,
+        }
+    },
+    "loggers": {
+        "uvicorn": {"handlers": ["default"], "level": "DEBUG"},
+        "uvicorn.error": {"level": "DEBUG"},
+        "uvicorn.access": {"handlers": ["access"], "level": "DEBUG", "propagate": False},
+    },
+}
 
 
 class Web:
@@ -56,7 +113,13 @@ class Web:
 
         self.init_api()
         self.web_api = uvicorn.Server(
-            config=uvicorn.Config(self.app, host=config_api.http_url, port=config_api.http_port)
+            config=uvicorn.Config(
+                self.app, 
+                host=config_api.http_url, 
+                port=config_api.http_port,
+                log_config=log_config,  # 使用自定义日志配置
+                access_log=True  # 启用访问日志，但通过过滤器控制
+            )
         )
         server_config = self.web_api.config
         if not server_config.loaded:
