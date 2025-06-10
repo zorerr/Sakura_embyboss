@@ -63,8 +63,10 @@ async def create_reds(
         money=money, members=members, sender_id=sender_id, sender_name=first_name
     )
 
-    if flag:
+    if flag or money < 0:  # 负数金额红包强制使用均分模式
         envelope.type = "equal"
+        if money < 0:
+            LOGGER.debug(f"【负分红包】强制使用均分模式：金额={money}, 份数={members}")
     elif private:
         envelope.type = "private"
         envelope.target_user = private
@@ -267,11 +269,13 @@ async def grab_red_envelope(_, call):
             current_receivers = len(envelope.receivers)
             
             if envelope.money >= 0:
-                # 正数金额：前remainder个人多分1元
+                # 正数金额：前remainder个人多分1分
                 amount = base_amount + (1 if current_receivers < remainder else 0)
             else:
-                # 负数金额：按负数分配，前remainder个人多扣1元
+                # 负数金额：按负数分配，前remainder个人多扣1分
                 amount = -(base_amount + (1 if current_receivers < remainder else 0))
+                # 记录详细日志以便排查问题
+                LOGGER.debug(f"【负分红包均分】金额={envelope.money}, 剩余金额={envelope.rest_money}, 份数={envelope.members}, 剩余份数={envelope.rest_members}, 当前领取人数={current_receivers}, 基础金额={base_amount}, 余数={remainder}, 分配金额={amount}")
 
         # 处理专享红包
         elif envelope.type == "private":
@@ -284,40 +288,51 @@ async def grab_red_envelope(_, call):
             if envelope.members > 0:
                 # 正数份数的拼手气红包
                 if envelope.rest_members > 1 and envelope.rest_money > 1:
-                    # 确保至少给最后一个人留1元
+                    # 确保至少给最后一个人留1分
                     max_amount = envelope.rest_money - (envelope.rest_members - 1)
                     if max_amount >= 1:
                         k = 2 * envelope.rest_money / envelope.rest_members
                         amount = int(random.uniform(1, min(k, max_amount, envelope.rest_money)))
-                        amount = max(1, amount)  # 确保至少1元
+                        amount = max(1, amount)  # 确保至少1分
                     else:
-                        amount = 1  # 最小保证1元
+                        amount = 1  # 最小保证1分
                 else:
                     amount = envelope.rest_money
             else:
                 # 负数份数的拼手气红包（管理员特权）
+                # 由于我们已经强制负分红包使用均分模式，这段代码对于负分红包不应该被执行
+                # 只处理正数金额的负数份数红包
                 remaining_count = abs(envelope.members) - len(envelope.receivers)
+                
+                # 正数金额的负数份数红包处理
                 if remaining_count > 1 and envelope.rest_money > 1:
-                    # 负数红包的特殊处理：确保每个人都能拿到钱
+                    # 确保每个人都能拿到钱
                     max_amount = envelope.rest_money - (remaining_count - 1)
                     if max_amount >= 1:
                         k = 2 * envelope.rest_money / remaining_count
                         amount = int(random.uniform(1, min(k, max_amount, envelope.rest_money)))
-                        amount = max(1, amount)  # 确保至少1元
+                        amount = max(1, amount)  # 确保至少1分
                     else:
-                        amount = 1  # 最小保证1元
+                        amount = 1  # 最小保证1分
                 else:
                     amount = envelope.rest_money
+                        
 
-        # 边界安全：确保领取金额合法
-        amount = max(0, min(amount, envelope.rest_money))
+        # 边界安全：确保领取金额合法，区分正负金额红包
+        if envelope.money >= 0:
+            # 正数金额红包：金额不能小于0，不能大于剩余金额
+            amount = max(0, min(amount, envelope.rest_money))
+            # 防止出现0分红包（除非剩余金额确实为0）
+            if envelope.rest_money > 0 and amount == 0:
+                amount = 1
+        else:
+            # 负数金额红包：金额应为负数，且不能小于剩余金额（负数比较时，较大的负数实际上数值较小）
+            amount = min(amount, envelope.rest_money)
+            # 防止出现0分红包（负数情况）
+            if amount == 0:
+                amount = -1  # 至少扣除1分
         
-        # 防止出现0元红包（除非剩余金额确实为0）
-        if envelope.rest_money > 0 and amount == 0:
-            amount = 1
 
-        # 记录并发安全日志
-        LOGGER.info(f"【红包领取】用户{call.from_user.id}领取红包{red_id}，金额:{amount}，剩余:{envelope.rest_money}")
 
         # 数据库事务保护：先更新用户余额，成功后再更新红包状态
         try:
@@ -331,11 +346,13 @@ async def grab_red_envelope(_, call):
             }
             envelope.rest_money -= amount
             
-            # 对于正数份数才更新rest_members，负数份数不需要
+            # 更新剩余份数
             if envelope.members > 0:
+                # 正数份数：直接减1
                 envelope.rest_members -= 1
+            # 负数份数不需要更新rest_members，因为我们使用len(envelope.receivers)来追踪已领取人数
                 
-            LOGGER.info(f"【红包领取成功】用户{call.from_user.id}成功领取{amount}{sakura_b}，新余额:{new_balance}")
+
             
         except Exception as db_error:
             LOGGER.error(f"【红包领取失败】数据库更新失败:{db_error}，用户:{call.from_user.id}")
@@ -529,9 +546,9 @@ async def generate_final_message(envelope):
             f"[{receiver['name']}](tg://user?id={envelope.target_user}) 领取"
         )
 
-    # 排序领取记录
+    # 排序领取记录（按金额绝对值排序，对于负数金额的红包，绝对值越大的越靠前）
     sorted_receivers = sorted(
-        envelope.receivers.items(), key=lambda x: x[1]["amount"], reverse=True
+        envelope.receivers.items(), key=lambda x: abs(x[1]["amount"]), reverse=True
     )
 
     text = (
