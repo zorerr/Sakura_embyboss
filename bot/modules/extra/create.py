@@ -112,7 +112,7 @@ async def uun_info(_, msg, name = None):
         a = ''
 
     if e.name and schedall.low_activity and not schedall.check_ex:
-        ex = f'__若{config.keep_alive_days}天无观看将封禁__'
+        ex = f'__若{config.activity_check_days}天无观看将封禁__'
 
     elif e.name and not schedall.low_activity and not schedall.check_ex:
         ex = ' __无需保号，放心食用__'

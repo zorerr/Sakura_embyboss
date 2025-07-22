@@ -389,7 +389,7 @@ async def create_user_internal(_, call, us, stats, deduct_coins=False, coin_cost
             if schedall.check_ex:
                 ex_display = ex.strftime("%Y-%m-%d %H:%M:%S")
             elif schedall.low_activity:
-                ex_display = f'__若{config.keep_alive_days}天无观看将封禁__'
+                ex = f'__若{config.activity_check_days}天无观看将封禁__'
             else:
                 ex_display = '__无需保号，放心食用__'
             

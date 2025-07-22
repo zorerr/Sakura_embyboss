@@ -43,7 +43,7 @@ async def members_info(tg=None, name=None):
         if lv == '白名单':
             ex = '+ ∞'
         elif data.name is not None and schedall.low_activity and not schedall.check_ex:
-            ex = f'__若{config.keep_alive_days}天无观看将封禁__'
+            ex = f'__若{config.activity_check_days}天无观看将封禁__'
         elif data.name is not None and not schedall.low_activity and not schedall.check_ex:
             ex = ' __无需保号，放心食用__'
         else:
