@@ -298,27 +298,79 @@ async def grab_red_envelope(_, call):
                         amount = 1  # 最小保证1分
                 else:
                     amount = envelope.rest_money
-    # 更新用户余额
-    new_balance = e.iv + amount
-    if new_balance > MAX_INT_VALUE or new_balance < MIN_INT_VALUE:
-        return await callAnswer(call, f"账户余额超出安全范围（{MIN_INT_VALUE} 到 {MAX_INT_VALUE}）。", True)
-    sql_update_emby(Emby.tg == call.from_user.id, iv=new_balance)
+    # 边界安全：确保领取金额合法，区分正负金额红包
+    if envelope.money >= 0:
+        # 正数金额红包：金额不能小于0，不能大于剩余金额
+        amount = max(0, min(amount, envelope.rest_money))
+        # 防止出现0分红包（除非剩余金额确实为0）
+        if envelope.rest_money > 0 and amount == 0:
+            amount = 1
+    else:
+        # 负数金额红包：金额应为负数，且绝对值不能大于剩余金额的绝对值
+        amount = max(amount, envelope.rest_money)
+        # 防止出现0分红包（负数情况）
+        if amount == 0:
+            amount = -1  # 至少扣除1分
+    
 
-    # 更新红包信息
-    envelope.receivers[call.from_user.id] = {
-        "amount": amount,
-        "name": call.from_user.first_name or "Anonymous",
-    }
-    envelope.rest_money -= amount
-    envelope.rest_members -= 1
-
-    await callAnswer(
-        call, f"🧧恭喜，你领取到了\n{envelope.sender_name} の {amount}{sakura_b}", True
-    )
+    # 数据库事务保护：先更新用户余额，成功后再更新红包状态
+    try:
+        # 更新用户余额
+        new_balance = e.iv + amount
+        if new_balance > MAX_INT_VALUE or new_balance < MIN_INT_VALUE:
+            return await callAnswer(call, f"账户余额超出安全范围（{MIN_INT_VALUE} 到 {MAX_INT_VALUE}）。", True)
+        sql_update_emby(Emby.tg == call.from_user.id, iv=new_balance)
+        
+        # 数据库操作成功后，更新红包状态
+        envelope.receivers[call.from_user.id] = {
+            "amount": amount,
+            "name": call.from_user.first_name or "Anonymous",
+        }
+        envelope.rest_money -= amount
+        
+        # 更新剩余份数
+        if envelope.members > 0:
+            # 正数份数：直接减1
+            envelope.rest_members -= 1
+        # 负数份数不需要更新rest_members，因为我们使用len(envelope.receivers)来追踪已领取人数
+        
+        # 记录负分红包领取后的状态（用于调试）
+        if envelope.money < 0:
+            LOGGER.debug(f"【负分红包领取】用户ID={call.from_user.id}, 金额={amount}, 剩余金额={envelope.rest_money}, 剩余份数={envelope.rest_members}, 当前领取人数={len(envelope.receivers)}")
+    except Exception as db_error:
+        LOGGER.error(f"【红包领取失败】数据库更新失败:{db_error}，用户:{call.from_user.id}")
+        return await callAnswer(call, "❌ 系统繁忙，请稍后再试", True)
+        
+    # 提示用户领取成功
+    # 专享红包特殊提示
+    if envelope.type == "private":
+        await callAnswer(
+            call,
+            f"🧧恭喜，你领取到了\n{envelope.sender_name} の {amount}{sakura_b}\n\n{envelope.message}",
+            True,
+        )
+    else:
+        await callAnswer(
+            call, f"🧧恭喜，你领取到了\n{envelope.sender_name} の {amount}{sakura_b}", True
+        )
 
     # 处理红包抢完后的展示
-    if envelope.rest_members == 0:
+    # 判断红包是否已完成：正数份数看rest_members，负数份数看已领取次数
+    is_finished = (envelope.members > 0 and envelope.rest_members == 0) or \
+                  (envelope.members < 0 and len(envelope.receivers) >= abs(envelope.members))
+    
+    if is_finished:
+        # 记录红包完成日志
+        if envelope.money < 0:
+            LOGGER.info(f"【负分红包完成】红包{red_id}已被领完，总共{len(envelope.receivers)}人领取，总金额{envelope.money}")
+        else:
+            LOGGER.info(f"【红包完成】红包{red_id}已被领完，总共{len(envelope.receivers)}人领取")
+            
+        # 从内存中移除红包和锁
         red_envelopes.pop(red_id)
+        red_envelope_locks.pop(red_id, None)
+        
+        # 生成并显示红包领取结果
         text = await generate_final_message(envelope)
         n = 2048
         chunks = [text[i : i + n] for i in range(0, len(text), n)]
@@ -326,96 +378,7 @@ async def grab_red_envelope(_, call):
             if i == 0:
                 await editMessage(call, chunk)
             else:
-                # 负数份数的拼手气红包（管理员特权）
-                # 由于我们已经强制负分红包使用均分模式，这段代码对于负分红包不应该被执行
-                # 只处理正数金额的负数份数红包
-                remaining_count = abs(envelope.members) - len(envelope.receivers)
-                
-                # 正数金额的负数份数红包处理
-                if remaining_count > 1 and envelope.rest_money > 1:
-                    # 确保每个人都能拿到钱
-                    max_amount = envelope.rest_money - (remaining_count - 1)
-                    if max_amount >= 1:
-                        k = 2 * envelope.rest_money / remaining_count
-                        amount = int(random.uniform(1, min(k, max_amount, envelope.rest_money)))
-                        amount = max(1, amount)  # 确保至少1分
-                    else:
-                        amount = 1  # 最小保证1分
-                else:
-                    amount = envelope.rest_money
-                        
-
-        # 边界安全：确保领取金额合法，区分正负金额红包
-        if envelope.money >= 0:
-            # 正数金额红包：金额不能小于0，不能大于剩余金额
-            amount = max(0, min(amount, envelope.rest_money))
-            # 防止出现0分红包（除非剩余金额确实为0）
-            if envelope.rest_money > 0 and amount == 0:
-                amount = 1
-        else:
-            # 负数金额红包：金额应为负数，且不能小于剩余金额（负数比较时，较大的负数实际上数值较小）
-            amount = min(amount, envelope.rest_money)
-            # 防止出现0分红包（负数情况）
-            if amount == 0:
-                amount = -1  # 至少扣除1分
-        
-
-
-        # 数据库事务保护：先更新用户余额，成功后再更新红包状态
-        try:
-            new_balance = e.iv + amount
-            sql_update_emby(Emby.tg == call.from_user.id, iv=new_balance)
-            
-            # 数据库操作成功后，更新红包状态
-            envelope.receivers[call.from_user.id] = {
-                "amount": amount,
-                "name": call.from_user.first_name or "Anonymous",
-            }
-            envelope.rest_money -= amount
-            
-            # 更新剩余份数
-            if envelope.members > 0:
-                # 正数份数：直接减1
-                envelope.rest_members -= 1
-            # 负数份数不需要更新rest_members，因为我们使用len(envelope.receivers)来追踪已领取人数
-                
-
-            
-        except Exception as db_error:
-            LOGGER.error(f"【红包领取失败】数据库更新失败:{db_error}，用户:{call.from_user.id}")
-            return await callAnswer(call, "❌ 系统繁忙，请稍后再试", True)
-
-        # 专享红包特殊提示
-        if envelope.type == "private":
-            await callAnswer(
-                call,
-                f"🧧恭喜，你领取到了\n{envelope.sender_name} の {amount}{sakura_b}\n\n{envelope.message}",
-                True,
-            )
-        else:
-            await callAnswer(
-                call, f"🧧恭喜，你领取到了\n{envelope.sender_name} の {amount}{sakura_b}", True
-            )
-
-        # 处理红包抢完后的展示
-        # 判断红包是否已完成：正数份数看rest_members，负数份数看已领取次数
-        is_finished = (envelope.members > 0 and envelope.rest_members == 0) or \
-                      (envelope.members < 0 and len(envelope.receivers) >= abs(envelope.members))
-        
-        if is_finished:
-            red_envelopes.pop(red_id)
-            # 清理锁
-            red_envelope_locks.pop(red_id, None)
-            LOGGER.info(f"【红包完成】红包{red_id}已被领完，总共{len(envelope.receivers)}人领取")
-            
-            text = await generate_final_message(envelope)
-            n = 2048
-            chunks = [text[i : i + n] for i in range(0, len(text), n)]
-            for i, chunk in enumerate(chunks):
-                if i == 0:
-                    await editMessage(call, chunk)
-                else:
-                    await call.message.reply(chunk)
+                await call.message.reply(chunk)
 
 
 async def verify_red_envelope_sender(msg, money, is_private=False, members=None):
