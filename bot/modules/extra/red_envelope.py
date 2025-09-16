@@ -23,7 +23,7 @@ from bot.func_helper.scheduler import scheduler
 from bot.sql_helper import Session
 from bot.sql_helper.sql_emby import Emby, sql_get_emby, sql_update_emby
 from bot.ranks_helper.ranks_draw import RanksDraw
-from bot.schemas import Yulv
+from bot.schemas import Yulv, MAX_INT_VALUE, MIN_INT_VALUE
 
 # 小项目，说实话不想写数据库里面。放内存里了，从字典里面每次拿分
 
@@ -298,6 +298,33 @@ async def grab_red_envelope(_, call):
                         amount = 1  # 最小保证1分
                 else:
                     amount = envelope.rest_money
+    # 更新用户余额
+    new_balance = e.iv + amount
+    if new_balance > MAX_INT_VALUE or new_balance < MIN_INT_VALUE:
+        return await callAnswer(call, f"账户余额超出安全范围（{MIN_INT_VALUE} 到 {MAX_INT_VALUE}）。", True)
+    sql_update_emby(Emby.tg == call.from_user.id, iv=new_balance)
+
+    # 更新红包信息
+    envelope.receivers[call.from_user.id] = {
+        "amount": amount,
+        "name": call.from_user.first_name or "Anonymous",
+    }
+    envelope.rest_money -= amount
+    envelope.rest_members -= 1
+
+    await callAnswer(
+        call, f"🧧恭喜，你领取到了\n{envelope.sender_name} の {amount}{sakura_b}", True
+    )
+
+    # 处理红包抢完后的展示
+    if envelope.rest_members == 0:
+        red_envelopes.pop(red_id)
+        text = await generate_final_message(envelope)
+        n = 2048
+        chunks = [text[i : i + n] for i in range(0, len(text), n)]
+        for i, chunk in enumerate(chunks):
+            if i == 0:
+                await editMessage(call, chunk)
             else:
                 # 负数份数的拼手气红包（管理员特权）
                 # 由于我们已经强制负分红包使用均分模式，这段代码对于负分红包不应该被执行
@@ -565,9 +592,7 @@ async def generate_final_message(envelope):
     return text
 
 
-@bot.on_message(
-    filters.command("srank", prefixes) & user_in_group_on_filter & filters.group
-)
+@bot.on_message(filters.command("srank", prefixes) & user_in_group_on_filter & filters.group)
 async def s_rank(_, msg):
     await msg.delete()
     sender = None

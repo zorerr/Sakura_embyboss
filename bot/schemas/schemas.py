@@ -3,8 +3,10 @@ import os
 from pydantic import BaseModel, Field
 from typing import List, Optional, Union
 
-
 # 嵌套式的数据设计，规范数据 config.json
+
+MAX_INT_VALUE = 2147483647  # 2^31 - 1
+MIN_INT_VALUE = -2147483648  # -2^31
 
 class ExDate(BaseModel):
     mon: int = 30
@@ -183,6 +185,8 @@ class Config(BaseModel):
     fuxx_pitao: bool = True
     # 活跃检测天数，默认21天
     activity_check_days: int = 21
+    # 封存账号天数，默认5天
+    freeze_days: int = 5
     # 白名单用户专属的emby线路
     emby_whitelist_line: Optional[str] = None
     # 被拦截的user-agent模式列表
