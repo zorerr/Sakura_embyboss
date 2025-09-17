@@ -4,7 +4,7 @@
 部分目前有 导出日志，更改探针，更改emby线路，设置购买按钮
 
 """
-from bot import bot, prefixes, bot_photo, Now, LOGGER, config, save_config, _open, auto_update, moviepilot, sakura_b
+from bot import bot, prefixes, bot_photo, Now, LOGGER, config, save_config, _open, auto_update, moviepilot, sakura_b, game
 from pyrogram import filters
 
 from bot.func_helper.filters import admins_on_filter
@@ -445,3 +445,62 @@ async def set_activity_check_days(_, call):
                               f"🕰️ 【活跃检测天数】\n\n{days}天 **Done!**",
                               buttons=back_config_p_ikb)
             LOGGER.info(f"【admin】：{call.from_user.id} - 更新活跃检测天数为{days}天完成")
+
+@bot.on_callback_query(filters.regex('set_rob_open') & admins_on_filter)
+async def set_rob_open(_, call):
+    game.rob_open = not game.rob_open
+    if game.rob_open:
+        message = '👮🏻‍♂️ 您已开启 抢劫系统，现在用户可以使用抢劫功能了'
+        log_message = f"【admin】：管理员 {call.from_user.first_name} 已调整 抢劫系统 True"
+    else:
+        message = '👮🏻‍♂️ 您已关闭 抢劫系统，现在用户不能使用抢劫功能了'
+        log_message = f"【admin】：管理员 {call.from_user.first_name} 已调整 抢劫系统 False"
+    await callAnswer(call, message, True)
+    await config_p_re(_, call)
+    save_config()
+    LOGGER.info(log_message)
+
+@bot.on_callback_query(filters.regex('set_bet_open') & admins_on_filter)
+async def set_bet_open(_, call):
+    game.bet_open = not game.bet_open
+    if game.bet_open:
+        message = '👮🏻‍♂️ 您已开启 赌局系统，现在用户可以使用赌局功能了'
+        log_message = f"【admin】：管理员 {call.from_user.first_name} 已调整 赌局系统 True"
+    else:
+        message = '👮🏻‍♂️ 您已关闭 赌局系统，现在用户不能使用赌局功能了'
+        log_message = f"【admin】：管理员 {call.from_user.first_name} 已调整 赌局系统 False"
+    await callAnswer(call, message, True)
+    await config_p_re(_, call)
+    save_config()
+    LOGGER.info(log_message)
+
+@bot.on_callback_query(filters.regex('set_game_magnification') & admins_on_filter)
+async def set_game_magnification(_, call):
+    await callAnswer(call, '📌 设置游戏倍率')
+    send = await editMessage(call,
+                             f"🎮【设置游戏倍率】\n\n请输入一个正整数\n取消点击 /cancel\n\n当前游戏倍率: {game.magnification}")
+    if send is False:
+        return
+    txt = await callListen(call, 120, back_set_ikb('set_game_magnification'))
+    if txt is False:
+        return
+
+    elif txt.text == '/cancel':
+        await txt.delete()
+        await editMessage(call, '__您已经取消输入__ **会话已结束！**', buttons=back_set_ikb('set_game_magnification'))
+    else:
+        await txt.delete()
+        try:
+            magnification = int(txt.text)
+            if magnification <= 0:
+                raise ValueError("倍率必须大于0")
+        except ValueError:
+            await editMessage(call, f"请注意格式! 请输入大于0的整数。您的输入如下: \n\n`{txt.text}`",
+                              buttons=back_set_ikb('set_game_magnification'))
+        else:
+            game.magnification = magnification
+            save_config()
+            await editMessage(call,
+                              f"🎮 【游戏倍率】\n\n{magnification}倍 **Done!**",
+                              buttons=back_config_p_ikb)
+            LOGGER.info(f"【admin】：{call.from_user.id} - 更新游戏倍率为{magnification}倍完成")

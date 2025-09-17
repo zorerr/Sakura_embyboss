@@ -113,5 +113,10 @@
     "allow_origins": [
       "*"
     ]
+  },
+  "game": {
+    "rob_open": true,
+    "bet_open": true,
+    "magnification": 1
   }
 }

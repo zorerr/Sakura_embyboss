@@ -142,6 +142,11 @@ class RedEnvelope(BaseModel):
     status: bool = True  # 是否开启红包
     allow_private: bool = True # 是否允许专属红包
 
+class Game(BaseModel):
+    rob_open: bool = True  # 是否开启抢劫系统
+    bet_open: bool = True  # 是否开启赌局系统
+    magnification: int = 1  # 游戏倍率
+
 class Config(BaseModel):
     bot_name: str
     bot_token: str
@@ -203,6 +208,7 @@ class Config(BaseModel):
     auto_update: AutoUpdate = Field(default_factory=AutoUpdate)
     red_envelope: RedEnvelope = Field(default_factory=RedEnvelope)
     api: API = Field(default_factory=API)
+    game: Game = Field(default_factory=Game)
 
     def __init__(self, **data):
         super().__init__(**data)
