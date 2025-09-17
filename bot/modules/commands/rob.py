@@ -542,7 +542,7 @@ async def handle_rob_callback(client, call):
             parts = call.data.split('_')
 
             if not sql_get_emby(call.from_user.id):
-                await call.answer("⚠️ 数据库没有你，请私聊bot /start 注册", show_alert=True)
+                await call.answer("⚠️ 你还未私聊bot! 数据库没有你.", show_alert=True)
                 return
 
             if len(parts) < 5:
@@ -590,7 +590,7 @@ async def rob_user(_, message):
 
     target_user = sql_get_emby(message.reply_to_message.from_user.id)
     if not target_user:
-        asyncio.create_task(delete_msg_with_error(message, '⚠️ 数据库没有该用户，请提示他私聊bot /start 注册'))
+        asyncio.create_task(delete_msg_with_error(message, '⚠️ 数据库中没有ta。请提醒ta先私聊我"'))
         return
 
     if message.from_user.id == message.reply_to_message.from_user.id:

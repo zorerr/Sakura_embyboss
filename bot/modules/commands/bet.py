@@ -107,8 +107,8 @@ class BettingSystem:
         
         # 获取用户信息
         user = sql_get_emby(user_id)
-        if not user or not user.embyid:
-            return "❌ 您还未注册Emby账户"
+        if not user:
+            return "⚠️ 你还未私聊bot! 数据库没有你."
         
         # 检查余额 (假设user.iv是余额字段)
         if user.iv < amount_int:
@@ -371,9 +371,8 @@ async def handle_startbet_command(client, message):
     message_text = message.text
 
     user = sql_get_emby(user_id)
-    if not user or not user.embyid:
-        error_message = await message.reply_text("❌ 您还未注册Emby账户")
-        asyncio.create_task(deleteMessage(error_message, 360))
+    if not user:
+        asyncio.create_task(delete_msg_with_error(message, '⚠️ 数据库中没有ta。请提醒ta私聊我"'))
         return
 
     # 检查用户金币是否足够支付手续费
