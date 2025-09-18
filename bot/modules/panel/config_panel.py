@@ -474,33 +474,3 @@ async def set_bet_open(_, call):
     save_config()
     LOGGER.info(log_message)
 
-@bot.on_callback_query(filters.regex('set_game_magnification') & admins_on_filter)
-async def set_game_magnification(_, call):
-    await callAnswer(call, '📌 设置游戏倍率')
-    send = await editMessage(call,
-                             f"🎮【设置游戏倍率】\n\n请输入一个正整数\n取消点击 /cancel\n\n当前游戏倍率: {game.magnification}")
-    if send is False:
-        return
-    txt = await callListen(call, 120, back_set_ikb('set_game_magnification'))
-    if txt is False:
-        return
-
-    elif txt.text == '/cancel':
-        await txt.delete()
-        await editMessage(call, '__您已经取消输入__ **会话已结束！**', buttons=back_set_ikb('set_game_magnification'))
-    else:
-        await txt.delete()
-        try:
-            magnification = int(txt.text)
-            if magnification <= 0:
-                raise ValueError("倍率必须大于0")
-        except ValueError:
-            await editMessage(call, f"请注意格式! 请输入大于0的整数。您的输入如下: \n\n`{txt.text}`",
-                              buttons=back_set_ikb('set_game_magnification'))
-        else:
-            game.magnification = magnification
-            save_config()
-            await editMessage(call,
-                              f"🎮 【游戏倍率】\n\n{magnification}倍 **Done!**",
-                              buttons=back_config_p_ikb)
-            LOGGER.info(f"【admin】：{call.from_user.id} - 更新游戏倍率为{magnification}倍完成")

@@ -372,7 +372,7 @@ async def handle_startbet_command(client, message):
 
     user = sql_get_emby(user_id)
     if not user:
-        asyncio.create_task(delete_msg_with_error(message, '⚠️ 数据库中没有ta。请提醒ta私聊我"'))
+        asyncio.create_task(delete_msg_with_error(message, '⚠️ 数据库中没有ta。请提醒ta私聊我'))
         return
 
     # 检查用户金币是否足够支付手续费

@@ -590,7 +590,7 @@ async def rob_user(_, message):
 
     target_user = sql_get_emby(message.reply_to_message.from_user.id)
     if not target_user:
-        asyncio.create_task(delete_msg_with_error(message, '⚠️ 数据库中没有ta。请提醒ta先私聊我"'))
+        asyncio.create_task(delete_msg_with_error(message, '⚠️ 数据库中没有ta。请提醒ta先私聊我'))
         return
 
     if message.from_user.id == message.reply_to_message.from_user.id:
