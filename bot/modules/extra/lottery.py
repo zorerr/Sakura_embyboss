@@ -231,15 +231,42 @@ async def handle_lottery_setup(_, msg: Message):
             fee = int(text)
             if fee < 0:
                 return await sendMessage(msg, "❌ 费用不能为负数，请重新输入：")
+            if fee == 0:
+                return await sendMessage(msg, "❌ 付费抽奖费用必须大于0，请重新输入：")
+            
+            # 检查创建者余额是否足够作为退款保证金
+            e = sql_get_emby(tg=msg.from_user.id)
+            if not e:
+                return await sendMessage(msg, "❌ 用户数据不存在，无法创建抽奖")
+            
             setup.lottery.entry_fee = fee
-            setup.step = "refund_losers"
             
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("✅ 启用退款", "lottery_setup_refund_yes")],
-                [InlineKeyboardButton("❌ 不退款", "lottery_setup_refund_no")]
-            ])
-            
-            await sendMessage(msg, f"✅ 参与费用已设置为 {fee} {sakura_b}\n\n是否给未中奖者退还50%费用？", buttons=keyboard)
+            # 检查是否来自预览修改
+            if hasattr(setup, 'from_preview') and setup.from_preview:
+                setup.from_preview = False
+                setup.step = "preview"
+                await show_lottery_preview(msg, setup)
+            else:
+                setup.step = "fee_confirm"
+                
+                keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ 确认设置", "lottery_setup_fee_confirm")],
+                    [InlineKeyboardButton("❌ 重新设置", "lottery_setup_fee_reset")]
+                ])
+                
+                confirm_text = f"""💰 **参与费用确认**
+
+📋 费用设置：{fee} {sakura_b}/人
+💳 当前余额：{e.iv} {sakura_b}
+
+⚠️ **重要说明：**
+• 参与者支付的费用将转入您的账户
+• 如设置退款，未中奖者将获得50%退款
+• 退款将从您的账户扣除
+
+是否确认此费用设置？"""
+                
+                await sendMessage(msg, confirm_text, buttons=keyboard)
         except ValueError:
             await sendMessage(msg, "❌ 请输入有效的数字：")
     
@@ -359,6 +386,30 @@ async def handle_lottery_setup_callback(_, call: CallbackQuery):
         ])
         
         await editMessage(call, "✅ 已设置为免费参与\n\n请选择开奖方式：", buttons=keyboard)
+    
+    elif data == "lottery_setup_fee_confirm":
+        # 确认费用设置
+        setup = lottery_setup_sessions.get(user_id)
+        if not setup:
+            return await callAnswer(call, "❌ 设置会话已过期", True)
+        
+        setup.step = "refund_losers"
+        
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ 启用退款", "lottery_setup_refund_yes")],
+            [InlineKeyboardButton("❌ 不退款", "lottery_setup_refund_no")]
+        ])
+        
+        await editMessage(call, f"✅ 参与费用已确认为 {setup.lottery.entry_fee} {sakura_b}\n\n是否给未中奖者退还50%费用？", buttons=keyboard)
+    
+    elif data == "lottery_setup_fee_reset":
+        # 重新设置费用
+        setup = lottery_setup_sessions.get(user_id)
+        if not setup:
+            return await callAnswer(call, "❌ 设置会话已过期", True)
+        
+        setup.step = "entry_fee"
+        await editMessage(call, "💰 请重新输入参与费用（单位：" + sakura_b + "）：")
     
     elif data == "lottery_setup_refund_yes":
         setup.lottery.refund_losers = True
