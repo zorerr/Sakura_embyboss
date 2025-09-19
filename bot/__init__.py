@@ -85,6 +85,7 @@ user_p = [
     BotCommand("count", "[用户] 媒体库数量"),
     BotCommand("red", "[用户/禁言] 发红包"),
     BotCommand("srank", "[用户/禁言] 查看计分"),
+    BotCommand("lottery", "[用户] 创建抽奖"),
     BotCommand("rob", "[用户] 开始抢劫事件"),
     BotCommand("startbet", "[用户] 创建赌局"),
     BotCommand("bet", "[用户] 参与赌局")]
@@ -94,8 +95,7 @@ admin_p = user_p + [
     BotCommand("kk", "管理用户 [管理]"),
     BotCommand("score", "加/减积分 [管理]"),
     BotCommand("coins", f"加/减{sakura_b} [管理]"),
-    BotCommand("deleted", f"清理死号 [管理]"),
-    BotCommand("kick_not_emby", f"踢出当前群内无号崽 [管理]"),
+    BotCommand("deleted", "清理死号 [管理]"),
     BotCommand("renew", "调整到期时间 [管理]"),
     BotCommand("rmemby", "删除用户[包括非tg] [管理]"),
     BotCommand("prouser", "增加白名单 [管理]"),
