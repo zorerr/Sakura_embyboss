@@ -100,7 +100,8 @@ async def lottery_group_hint(_, msg: Message):
     text = (
         f"🎲 **创建抽奖**\n\n"
         f"💡 需要私聊机器人创建抽奖\n"
-        f"📋 要求：数据库中有{sakura_b}即可创建\n\n"
+        f"📋 要求：数据库中有{sakura_b}即可创建\n"
+        f"💰 可设置参与费用（创建者获得收益）\n\n"
         f"🔗 请私聊机器人发送 `/lottery` 开始创建"
     )
     
@@ -165,20 +166,38 @@ async def handle_lottery_setup(_, msg: Message):
     
     if setup.step == "name":
         setup.lottery.name = text
-        setup.step = "description"
-        await sendMessage(msg, "✅ 抽奖名称已设置\n\n请输入抽奖描述（可选，发送 /skip 跳过）：")
+        # 检查是否来自预览修改，如果是则返回预览
+        if hasattr(setup, 'from_preview') and setup.from_preview:
+            setup.from_preview = False
+            setup.step = "preview"
+            await show_lottery_preview(msg, setup)
+        else:
+            setup.step = "description"
+            await sendMessage(msg, "✅ 抽奖名称已设置\n\n请输入抽奖描述（可选，发送 /skip 跳过）：")
     
     elif setup.step == "description":
         if text != "/skip":
             setup.lottery.description = text
-        setup.step = "collection_location"
-        await sendMessage(msg, "✅ 抽奖描述已设置\n\n请输入领奖地点（可选，发送 /skip 跳过）：")
+        # 检查是否来自预览修改
+        if hasattr(setup, 'from_preview') and setup.from_preview:
+            setup.from_preview = False
+            setup.step = "preview"
+            await show_lottery_preview(msg, setup)
+        else:
+            setup.step = "collection_location"
+            await sendMessage(msg, "✅ 抽奖描述已设置\n\n请输入领奖地点（可选，发送 /skip 跳过）：")
     
     elif setup.step == "collection_location":
         if text != "/skip":
             setup.lottery.collection_location = text
-        setup.step = "image"
-        await sendMessage(msg, "✅ 领奖地点已设置\n\n请发送抽奖图片（可发送图片文件或图片URL，发送 /skip 跳过）：")
+        # 检查是否来自预览修改
+        if hasattr(setup, 'from_preview') and setup.from_preview:
+            setup.from_preview = False
+            setup.step = "preview"
+            await show_lottery_preview(msg, setup)
+        else:
+            setup.step = "image"
+            await sendMessage(msg, "✅ 领奖地点已设置\n\n请发送抽奖图片（可发送图片文件或图片URL，发送 /skip 跳过）：")
     
     elif setup.step == "image":
         if text == "/skip":
@@ -190,16 +209,22 @@ async def handle_lottery_setup(_, msg: Message):
             else:
                 return await sendMessage(msg, "❌ 请发送有效的图片URL（以http://或https://开头）或图片文件，或发送 /skip 跳过：")
         
-        setup.step = "participation_type"
-        
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🌍 所有人", "lottery_setup_participation_all")],
-            [InlineKeyboardButton("🎬 注册用户", "lottery_setup_participation_emby")],
-            [InlineKeyboardButton("🔰 未注册用户", "lottery_setup_participation_d_only")]
-        ])
-        
-        image_status = "已设置" if setup.lottery.image_url else "已跳过"
-        await sendMessage(msg, f"✅ 抽奖图片{image_status}\n\n请选择参与条件：", buttons=keyboard)
+        # 检查是否来自预览修改
+        if hasattr(setup, 'from_preview') and setup.from_preview:
+            setup.from_preview = False
+            setup.step = "preview"
+            await show_lottery_preview(msg, setup)
+        else:
+            setup.step = "participation_type"
+            
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🌍 所有人", "lottery_setup_participation_all")],
+                [InlineKeyboardButton("🎬 注册用户", "lottery_setup_participation_emby")],
+                [InlineKeyboardButton("🔰 未注册用户", "lottery_setup_participation_d_only")]
+            ])
+            
+            image_status = "已设置" if setup.lottery.image_url else "已跳过"
+            await sendMessage(msg, f"✅ 抽奖图片{image_status}\n\n请选择参与条件：", buttons=keyboard)
     
     elif setup.step == "entry_fee":
         try:
@@ -254,7 +279,9 @@ async def handle_lottery_setup(_, msg: Message):
         if text == "/done":
             if not setup.lottery.prizes:
                 return await sendMessage(msg, "❌ 至少需要设置一个奖品，请继续输入：")
-            await finish_lottery_setup(msg, setup)
+            # 进入预览步骤而不是直接发布
+            setup.step = "preview"
+            await show_lottery_preview(msg, setup)
         else:
             parts = text.split()
             if len(parts) < 2:
@@ -272,7 +299,7 @@ async def handle_lottery_setup(_, msg: Message):
                 await sendMessage(msg, "❌ 数量必须是数字，请重新输入：")
 
 
-@bot.on_callback_query(filters.regex("lottery_setup_"))
+@bot.on_callback_query(filters.regex("lottery_setup_|lottery_preview_|lottery_edit_|lottery_back_to_preview"))
 async def handle_lottery_setup_callback(_, call: CallbackQuery):
     """处理抽奖设置回调"""
     user_id = call.from_user.id
@@ -292,7 +319,7 @@ async def handle_lottery_setup_callback(_, call: CallbackQuery):
             [InlineKeyboardButton("🆓 免费参与", "lottery_setup_fee_no")]
         ])
         
-        await editMessage(call, "✅ 已设置为所有人可参与\n\n是否需要设置参与费用？", buttons=keyboard)
+        await editMessage(call, "✅ 已设置为所有人可参与\n\n是否需要设置参与费用\n（创建者获得收益）？", buttons=keyboard)
     
     elif data == "lottery_setup_participation_emby":
         setup.lottery.participation_type = "emby"
@@ -303,7 +330,7 @@ async def handle_lottery_setup_callback(_, call: CallbackQuery):
             [InlineKeyboardButton("🆓 免费参与", "lottery_setup_fee_no")]
         ])
         
-        await editMessage(call, "✅ 已设置为仅Emby用户可参与\n\n是否需要设置参与费用？", buttons=keyboard)
+        await editMessage(call, "✅ 已设置为仅Emby用户可参与\n\n是否需要设置参与费用\n（创建者获得收益）？", buttons=keyboard)
     
     elif data == "lottery_setup_participation_d_only":
         setup.lottery.participation_type = "d_only"
@@ -314,7 +341,7 @@ async def handle_lottery_setup_callback(_, call: CallbackQuery):
             [InlineKeyboardButton("🆓 免费参与", "lottery_setup_fee_no")]
         ])
         
-        await editMessage(call, "✅ 已设置为仅新用户可参与\n\n是否需要设置参与费用？", buttons=keyboard)
+        await editMessage(call, "✅ 已设置为仅未注册用户可参与\n\n是否需要设置参与费用\n（创建者获得收益）？", buttons=keyboard)
     
     elif data == "lottery_setup_fee_yes":
         setup.step = "entry_fee"
@@ -374,6 +401,175 @@ async def handle_lottery_setup_callback(_, call: CallbackQuery):
         beijing_tz = pytz.timezone("Asia/Shanghai")
         example_time = datetime.now(beijing_tz) + timedelta(minutes=5)
         await editMessage(call, f"✅ 已设置为定时开奖\n\n请输入开奖时间，格式：YYYY-MM-DD HH:MM\n例如：`{example_time.strftime('%Y-%m-%d %H:%M')}`")
+    
+    elif data == "lottery_preview_confirm":
+        # 确认发布抽奖
+        setup = lottery_setup_sessions.get(user_id)
+        if not setup:
+            return await callAnswer(call, "❌ 设置会话已过期", True)
+        
+        await callAnswer(call, "✅ 正在发布抽奖...", True)
+        try:
+            # 创建一个临时消息对象用于finish_lottery_setup
+            temp_msg = call.message
+            temp_msg.from_user = call.from_user
+            await finish_lottery_setup(temp_msg, setup)
+        except Exception as e:
+            # 如果发布失败，通知用户并恢复会话
+            lottery_setup_sessions[user_id] = setup
+            await editMessage(call, f"❌ 发布抽奖失败：{str(e)}\n\n请重试或联系管理员")
+            return
+    
+    elif data == "lottery_preview_cancel":
+        # 取消发布，清理会话
+        if user_id in lottery_setup_sessions:
+            del lottery_setup_sessions[user_id]
+        await editMessage(call, "❌ 抽奖创建已取消")
+    
+    elif data == "lottery_preview_edit_basic":
+        # 修改基本信息（名称、描述、图片、领奖地点）
+        setup = lottery_setup_sessions.get(user_id)
+        if not setup:
+            return await callAnswer(call, "❌ 设置会话已过期", True)
+        
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📝 修改名称", "lottery_edit_name")],
+            [InlineKeyboardButton("📄 修改描述", "lottery_edit_description")],
+            [InlineKeyboardButton("🖼️ 修改图片", "lottery_edit_image")],
+            [InlineKeyboardButton("📍 修改领奖地点", "lottery_edit_location")],
+            [InlineKeyboardButton("🔙 返回预览", "lottery_back_to_preview")]
+        ])
+        
+        await editMessage(call, "✏️ 选择要修改的基本信息：", buttons=keyboard)
+    
+    elif data == "lottery_preview_edit_participation":
+        # 修改参与条件
+        setup = lottery_setup_sessions.get(user_id)
+        if not setup:
+            return await callAnswer(call, "❌ 设置会话已过期", True)
+        
+        setup.step = "participation_type"
+        
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🌍 所有人", "lottery_setup_participation_all")],
+            [InlineKeyboardButton("🎬 注册用户", "lottery_setup_participation_emby")],
+            [InlineKeyboardButton("🔰 未注册用户", "lottery_setup_participation_d_only")],
+            [InlineKeyboardButton("🔙 返回预览", "lottery_back_to_preview")]
+        ])
+        
+        await editMessage(call, "👥 重新选择参与条件：", buttons=keyboard)
+    
+    elif data == "lottery_preview_edit_draw":
+        # 修改开奖方式
+        setup = lottery_setup_sessions.get(user_id)
+        if not setup:
+            return await callAnswer(call, "❌ 设置会话已过期", True)
+        
+        setup.step = "draw_type"
+        
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("👤 手动开奖", "lottery_setup_draw_manual")],
+            [InlineKeyboardButton("🤖 自动开奖", "lottery_setup_draw_auto")],
+            [InlineKeyboardButton("⏰ 定时开奖", "lottery_setup_draw_time")],
+            [InlineKeyboardButton("🔙 返回预览", "lottery_back_to_preview")]
+        ])
+        
+        await editMessage(call, "🎯 重新选择开奖方式：", buttons=keyboard)
+    
+    elif data == "lottery_preview_edit_prizes":
+        # 修改奖品
+        setup = lottery_setup_sessions.get(user_id)
+        if not setup:
+            return await callAnswer(call, "❌ 设置会话已过期", True)
+        
+        # 显示当前奖品列表
+        current_prizes = "\n".join([f"• {prize.name} x{prize.quantity}" for prize in setup.lottery.prizes])
+        
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🗑️ 清空重设", "lottery_edit_prizes_clear")],
+            [InlineKeyboardButton("➕ 继续添加", "lottery_edit_prizes_add")],
+            [InlineKeyboardButton("🔙 返回预览", "lottery_back_to_preview")]
+        ])
+        
+        text = f"🎁 当前奖品列表：\n{current_prizes}\n\n选择操作："
+        await editMessage(call, text, buttons=keyboard)
+    
+    elif data == "lottery_back_to_preview":
+        # 返回预览界面
+        setup = lottery_setup_sessions.get(user_id)
+        if not setup:
+            return await callAnswer(call, "❌ 设置会话已过期", True)
+        
+        setup.step = "preview"
+        preview_text = format_lottery_preview(setup.lottery)
+        
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ 确认发布", "lottery_preview_confirm")],
+            [InlineKeyboardButton("❌ 取消发布", "lottery_preview_cancel")],
+            [InlineKeyboardButton("✏️ 修改基本信息", "lottery_preview_edit_basic")],
+            [InlineKeyboardButton("👥 修改参与条件", "lottery_preview_edit_participation")],
+            [InlineKeyboardButton("🎯 修改开奖方式", "lottery_preview_edit_draw")],
+            [InlineKeyboardButton("🎁 修改奖品", "lottery_preview_edit_prizes")]
+        ])
+        
+        await editMessage(call, preview_text, buttons=keyboard)
+    
+    # 处理基本信息修改的具体选项
+    elif data == "lottery_edit_name":
+        setup = lottery_setup_sessions.get(user_id)
+        if not setup:
+            return await callAnswer(call, "❌ 设置会话已过期", True)
+        
+        setup.step = "name"
+        setup.from_preview = True  # 标记来自预览修改
+        await editMessage(call, f"📝 当前名称：{setup.lottery.name}\n\n请输入新的抽奖名称：")
+    
+    elif data == "lottery_edit_description":
+        setup = lottery_setup_sessions.get(user_id)
+        if not setup:
+            return await callAnswer(call, "❌ 设置会话已过期", True)
+        
+        setup.step = "description"
+        setup.from_preview = True  # 标记来自预览修改
+        current_desc = setup.lottery.description if setup.lottery.description else "无"
+        await editMessage(call, f"📄 当前描述：{current_desc}\n\n请输入新的抽奖描述（发送 /skip 跳过）：")
+    
+    elif data == "lottery_edit_image":
+        setup = lottery_setup_sessions.get(user_id)
+        if not setup:
+            return await callAnswer(call, "❌ 设置会话已过期", True)
+        
+        setup.step = "image"
+        setup.from_preview = True  # 标记来自预览修改
+        image_status = "已设置" if setup.lottery.image_url else "未设置"
+        await editMessage(call, f"🖼️ 当前图片：{image_status}\n\n请发送新的抽奖图片（可发送图片文件或图片URL，发送 /skip 跳过）：")
+    
+    elif data == "lottery_edit_location":
+        setup = lottery_setup_sessions.get(user_id)
+        if not setup:
+            return await callAnswer(call, "❌ 设置会话已过期", True)
+        
+        setup.step = "collection_location"
+        setup.from_preview = True  # 标记来自预览修改
+        current_location = setup.lottery.collection_location if setup.lottery.collection_location else "无"
+        await editMessage(call, f"📍 当前领奖地点：{current_location}\n\n请输入新的领奖地点（发送 /skip 跳过）：")
+    
+    elif data == "lottery_edit_prizes_clear":
+        setup = lottery_setup_sessions.get(user_id)
+        if not setup:
+            return await callAnswer(call, "❌ 设置会话已过期", True)
+        
+        setup.lottery.prizes = []  # 清空奖品列表
+        setup.step = "prizes"
+        await editMessage(call, "🗑️ 奖品列表已清空\n\n请重新输入奖品信息，格式：奖品名称 数量\n例如：iPhone 1\n输入 /done 完成设置")
+    
+    elif data == "lottery_edit_prizes_add":
+        setup = lottery_setup_sessions.get(user_id)
+        if not setup:
+            return await callAnswer(call, "❌ 设置会话已过期", True)
+        
+        setup.step = "prizes"
+        await editMessage(call, "➕ 继续添加奖品\n\n请输入奖品信息，格式：奖品名称 数量\n例如：iPhone 1\n输入 /done 完成设置")
 
 
 async def finish_lottery_setup(msg: Message, setup: LotterySetup):
@@ -443,6 +639,95 @@ async def finish_lottery_setup(msg: Message, setup: LotterySetup):
     # 启动定时开奖任务（如果是定时开奖）
     if lottery.draw_type == "time":
         await schedule_lottery_draw(lottery)
+
+
+def format_lottery_preview(lottery: Lottery) -> str:
+    """格式化抽奖预览消息"""
+    participation_type_text = {
+        "all": "🌍 所有人",
+        "emby": "🎬 注册用户", 
+        "d_only": "🔰 未注册用户"
+    }
+    
+    draw_type_text = {
+        "manual": "👤 手动开奖",
+        "auto": f"🤖 自动开奖（达到{lottery.target_participants}人时）",
+        "time": f"⏰ 定时开奖（{lottery.draw_time.strftime('%Y-%m-%d %H:%M')}）" if lottery.draw_time else "⏰ 定时开奖"
+    }
+    
+    prizes_text = "\n".join([f"   • {prize.name} x{prize.quantity}" for prize in lottery.prizes])
+    
+    text = f"""📋 **抽奖预览**
+
+🎟️ **抽奖名称**
+   {lottery.name}"""
+
+    # 只有当描述不为空时才显示
+    if lottery.description:
+        text += f"""
+
+📝 **抽奖描述**
+   {lottery.description}"""
+
+    # 只有当设置了图片时才显示
+    if lottery.image_url:
+        text += f"""
+
+🖼️ **抽奖图片**
+   ✅ 已设置"""
+
+    # 只有当设置了领奖联系人时才显示
+    if lottery.collection_location:
+        text += f"""
+
+📍 **领奖联系人**
+   {lottery.collection_location}"""
+
+    text += f"""
+
+👥 **参与条件**
+   {participation_type_text[lottery.participation_type]}"""
+
+    if lottery.entry_fee > 0:
+        text += f"\n   💰 参与费用：{lottery.entry_fee} {sakura_b}"
+        if lottery.refund_losers:
+            text += f"\n   💸 未中奖退还：{lottery.entry_fee // 2} {sakura_b}（50%）"
+    else:
+        text += f"\n   🆓 免费参与"
+
+    text += f"""
+
+🎯 **开奖方式**
+   {draw_type_text[lottery.draw_type]}
+
+🎁 **奖品列表**
+{prizes_text}
+
+━━━━━━━━━━━━━━━━━━━
+请仔细检查以上设置，确认无误后点击"确认发布"按钮。"""
+    
+    return text
+
+
+async def show_lottery_preview(msg: Message, setup: LotterySetup):
+    """显示抽奖预览界面"""
+    lottery = setup.lottery
+    preview_text = format_lottery_preview(lottery)
+    
+    # 创建预览按钮
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ 确认发布", "lottery_preview_confirm")],
+        [InlineKeyboardButton("❌ 取消发布", "lottery_preview_cancel")],
+        [InlineKeyboardButton("✏️ 修改基本信息", "lottery_preview_edit_basic")],
+        [InlineKeyboardButton("👥 修改参与条件", "lottery_preview_edit_participation")],
+        [InlineKeyboardButton("🎯 修改开奖方式", "lottery_preview_edit_draw")],
+        [InlineKeyboardButton("🎁 修改奖品", "lottery_preview_edit_prizes")]
+    ])
+    
+    if lottery.image_url:
+        await sendPhoto(msg, photo=lottery.image_url, caption=preview_text, buttons=keyboard)
+    else:
+        await sendMessage(msg, preview_text, buttons=keyboard)
 
 
 def format_lottery_message(lottery: Lottery) -> str:
@@ -524,8 +809,13 @@ async def join_lottery(_, call: CallbackQuery):
         if not e or e.iv < lottery.entry_fee:
             return await callAnswer(call, f"❌ 余额不足，需要 {lottery.entry_fee} {sakura_b}", True)
         
-        # 扣除费用
+        # 扣除参与者费用
         sql_update_emby(Emby.tg == user_id, iv=e.iv - lottery.entry_fee)
+        
+        # 将费用转给创建者
+        creator = sql_get_emby(tg=lottery.creator_id)
+        if creator:
+            sql_update_emby(Emby.tg == lottery.creator_id, iv=creator.iv + lottery.entry_fee)
     
     # 添加参与者
     lottery.participants[user_id] = user_name
@@ -751,6 +1041,7 @@ async def draw_lottery(lottery: Lottery, chat_id: int, message_id: int):
         # 给未中奖者退还50%费用
         refund_amount = lottery.entry_fee // 2
         refunded_count = 0
+        total_refund = 0
         
         for participant_id in lottery.participants.keys():
             if participant_id not in winner_ids:
@@ -758,6 +1049,7 @@ async def draw_lottery(lottery: Lottery, chat_id: int, message_id: int):
                     e = sql_get_emby(tg=participant_id)
                     if e:
                         sql_update_emby(Emby.tg == participant_id, iv=e.iv + refund_amount)
+                        total_refund += refund_amount
                         # 发送退款通知
                         await bot.send_message(
                             participant_id, 
@@ -767,8 +1059,50 @@ async def draw_lottery(lottery: Lottery, chat_id: int, message_id: int):
                 except Exception:
                     pass  # 忽略退款失败的情况
         
+        # 从创建者账户扣除退款总额
+        if total_refund > 0:
+            creator = sql_get_emby(tg=lottery.creator_id)
+            if creator:
+                sql_update_emby(Emby.tg == lottery.creator_id, iv=creator.iv - total_refund)
+                
+                # 向创建者发送退款通知
+                try:
+                    total_income = len(lottery.participants) * lottery.entry_fee
+                    final_income = total_income - total_refund
+                    
+                    refund_notify = f"""💸 **抽奖退款通知**
+
+🎟️ 抽奖名称：{lottery.name}
+📊 参与统计：{len(lottery.participants)} 人参与
+💰 总收入：{total_income} {sakura_b}
+💸 退款金额：{total_refund} {sakura_b} (给 {refunded_count} 位未中奖者)
+💵 最终收益：{final_income} {sakura_b}
+
+抽奖已结束，退款已完成！"""
+                    
+                    await bot.send_message(lottery.creator_id, refund_notify)
+                except Exception:
+                    pass  # 忽略通知发送失败
+        
         if refunded_count > 0:
             result_text += f"\n💸 已为 {refunded_count} 位未中奖者退还50%费用"
+    else:
+        # 没有设置退款，向创建者发送收益通知（仅限付费抽奖）
+        if lottery.entry_fee > 0:
+            try:
+                total_income = len(lottery.participants) * lottery.entry_fee
+                
+                income_notify = f"""💰 **抽奖收益通知**
+
+🎟️ 抽奖名称：{lottery.name}
+📊 参与统计：{len(lottery.participants)} 人参与
+💵 总收益：{total_income} {sakura_b}
+
+抽奖已结束，全部收益已到账！"""
+                
+                await bot.send_message(lottery.creator_id, income_notify)
+            except Exception:
+                pass  # 忽略通知发送失败
     
     # 发送私信给中奖者
     for prize_name, winner_list in winners.items():
@@ -884,11 +1218,13 @@ async def handle_qx_lottery(_, call: CallbackQuery):
     
     # 退还参与费用
     if lottery.entry_fee > 0:
+        total_refund = 0
         for participant_id in lottery.participants.keys():
             try:
                 e = sql_get_emby(tg=participant_id)
                 if e:
                     sql_update_emby(Emby.tg == participant_id, iv=e.iv + lottery.entry_fee)
+                    total_refund += lottery.entry_fee
                     # 发送退款通知
                     await bot.send_message(
                         participant_id, 
@@ -896,6 +1232,27 @@ async def handle_qx_lottery(_, call: CallbackQuery):
                     )
             except Exception:
                 pass  # 忽略退款失败的情况
+        
+        # 从创建者账户扣除退款总额
+        if total_refund > 0:
+            creator = sql_get_emby(tg=lottery.creator_id)
+            if creator:
+                sql_update_emby(Emby.tg == lottery.creator_id, iv=creator.iv - total_refund)
+                
+                # 向创建者发送抽奖终止通知
+                try:
+                    terminate_notify = f"""⚠️ **抽奖终止通知**
+
+🎟️ 抽奖名称：{lottery.name}
+📊 参与统计：{len(lottery.participants)} 人参与
+💸 退款金额：{total_refund} {sakura_b}
+🔚 终止者：{call.from_user.first_name or '管理员'}
+
+您的抽奖已被终止，所有参与费用已退还给参与者。"""
+                    
+                    await bot.send_message(lottery.creator_id, terminate_notify)
+                except Exception:
+                    pass  # 忽略通知发送失败
     
     # 更新所有群组中的消息
     if hasattr(lottery, 'group_messages'):
